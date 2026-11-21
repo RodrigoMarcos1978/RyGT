@@ -69,6 +69,27 @@ on its Game page pick your game, update, firmware module and font folders, press
 update the folder for both games. The loader's source is in
 [loader](loader). Manual setup steps are in [docs/gt-sport/README.md](docs/gt-sport/README.md).
 
+## FAQ
+
+### Why do shaders need compiling? The PS4 never did that!
+
+It did. Polyphony just did it once, for the PS4's one and only GPU. Your PC has a different
+graphics card, so RyGT translates each shader and lets your driver compile it for your card. That
+happens the first time a shader shows up. After that it's saved, and the next time it's instant. A
+driver update clears the driver's cache, so you'll see some of it again after one.
+
+### The Bloodborne and inFAMOUS PC ports precompile everything up front. Why can't GT?
+
+Those games keep their shaders in plain files, so the ports can read them all before you play. GT
+keeps them inside Polyphony's encrypted archives. Opening those would mean shipping decryption keys,
+and that's the kind of thing that landed Yuzu in court. So we only see a shader once the game loads
+it itself. GT7 also has far more shaders, and much bigger ones: even with all the code, compiling
+everything would take anywhere from tens of minutes to a few hours, depending on your CPU.
+
+What we do instead: we'd rather let something pop in a little late than freeze your game, and we
+keep everything, so your second visit to a track is smooth. We're also looking at ways to get
+shaders ready before you need them.
+
 ## How it fits together
 
 ```
