@@ -1366,11 +1366,6 @@ namespace RyGT
                         start.EnvironmentVariables["RYGT_MANIFEST_RECORD"] = "1";
                         start.EnvironmentVariables["RYGT_MANIFEST_PRETRANSLATE"] = "1";
                     }
-                    // PERF-GT7-108 from the Graphics page: the pipelines this PC's driver cache lacks (after
-                    // a driver update) are compiled at start from the recipes kept in the compile pack.
-                    // Only when checked: Jouer-Compile-Pack.cmd sets it itself before starting this launcher.
-                    if (GpuSetting(root, "compile_pack") is bool && (bool)GpuSetting(root, "compile_pack"))
-                        start.EnvironmentVariables["RYGT_COMPILE_PACK"] = "1";
                     // DLSS frame multiplier from the Graphics page (generated frames, 1-5).
                     start.EnvironmentVariables["RYGT_DLSSG_FRAMES"] = DlssgFrames(root).ToString();
                     // Upscaling quality from the Graphics page (the size DLSS and FSR 3.1 scale to).

@@ -6,6 +6,14 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.12 - 2026-11-21
+
+* FIX-RT-022: GT7's Shaders page offers GT Sport's "Precompile shaders on the splash screen" instead of
+  "Compile the shaders already seen on this PC at start, after a driver update", which compiled nothing:
+  the compile pack holds shader object sets, and GT7 runs without shader objects. Off by default for GT7
+  (the setting it already wrote): after a driver or renderer update the splash screen waits until every
+  stored pipeline is built. It acts with a renderer that has shadGT's PERF-GT7-137.
+
 ## 0.3.11 - 2026-11-20
 
 * FIX-RT-016: GT7 shows its blue picture in a fresh RyGT package too. launcherackground.png and logo.png

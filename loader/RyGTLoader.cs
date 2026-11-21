@@ -2581,11 +2581,17 @@ namespace RyGT
             else
             {
                 shaders = Section(shadersPage, "Compiling");
-                // FEAT-GTS-290: ryGT7 had these two on its Graphics page; the same GPU settings, both off unless
-                // checked. PERF-GT7-111/117: shader pre-translation (RYGT_MANIFEST_RECORD / RYGT_MANIFEST_PRETRANSLATE).
+                // FEAT-GTS-290: ryGT7 had this one on its Graphics page, off unless checked.
+                // PERF-GT7-111/117: shader pre-translation (RYGT_MANIFEST_RECORD / RYGT_MANIFEST_PRETRANSLATE).
                 AddOption(shaders, "Rebuild translated shaders in the background after a renderer update (about 30 MB a track)", "GPU", "shader_pretranslate", false);
-                // PERF-GT7-108: the compile pack (RYGT_COMPILE_PACK).
-                AddOption(shaders, "Compile the shaders already seen on this PC at start, after a driver update (background, pauses in races)", "GPU", "compile_pack", false);
+                // FIX-RT-022: GT Sport's option (GPU.precompile_shaders, which GT7 follows from shadGT's
+                // PERF-GT7-137): every stored pipeline is built while the splash screen shows. Off for GT7
+                // (EnsureGT7Defaults): after a driver or renderer update the splash waited 9 to 14 minutes
+                // for ~15,000 pipelines (RTX 4070), and with a warm cache races ran no smoother. It replaces
+                // the compile pack option (PERF-GT7-108), which compiled nothing: the pack holds shader
+                // object sets, and GT7 runs without shader objects.
+                AddOption(shaders, "Precompile shaders on the splash screen", "GPU", "precompile_shaders", false);
+                shaders.Controls.Add(Hint("The splash screen waits until every stored shader is built: up to 15 minutes after a driver or ryGT update."));
             }
             // What the game does while a new shader compiles during play (GPU.compile_mode): GT Sport
             // slows down by default, GT7 keeps going.
