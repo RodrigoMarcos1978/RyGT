@@ -1030,6 +1030,29 @@ namespace RyGT
         }
 
 
+        // FIX-RT-024: why a game file could not be linked. Hard links and symbolic links need NTFS (or
+        // ReFS) on both sides; on an exFAT or FAT32 drive, often a removable one, both fail even with
+        // RyGT on the game's drive and Developer Mode on, which the old message alone suggested
+        // (rygt7 issue 36).
+        static string LinkFailure(string source, string link, int error)
+        {
+            string text = "Could not link " + source + " (Windows error " + error + "). ";
+            foreach (string path in new[] { source, link })
+            {
+                try
+                {
+                    var drive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path)));
+                    string format = drive.DriveFormat;
+                    if (!format.Equals("NTFS", StringComparison.OrdinalIgnoreCase) &&
+                        !format.Equals("ReFS", StringComparison.OrdinalIgnoreCase))
+                        return text + drive.Name + " is formatted " + format + ", and Windows can only link files on NTFS. " +
+                               "Put the game files and RyGT on an NTFS drive (or convert this one to NTFS).";
+                }
+                catch { }
+            }
+            return text + "Keep RyGT on the game's drive or enable Windows Developer Mode.";
+        }
+
         // With a runtime that can't read the game folders (see RuntimeReadsGameFolders), app0 is linked
         // as before.
         void LinkGameFiles(GameLayout layout, string convertedModules, string app0)
@@ -1047,7 +1070,7 @@ namespace RyGT
                 if (Wine.Detected) unixLinks[target] = pair.Value;
                 else if (!Native.CreateHardLink(target, pair.Value, IntPtr.Zero) &&
                          !Native.CreateSymbolicLink(target, pair.Value, 2))
-                    throw new Exception("Could not link " + pair.Value + ". Keep RyGT on the game's drive or enable Windows Developer Mode.");
+                    throw new Exception(LinkFailure(pair.Value, target, Marshal.GetLastWin32Error()));
                 linked++;
             }
             if (Wine.Detected) Wine.Link(unixLinks);
