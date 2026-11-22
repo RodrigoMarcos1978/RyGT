@@ -2044,7 +2044,6 @@ namespace RyGT
         Button setup, addDlss, downloadDlss;
         readonly Button play;
         readonly Label status;
-        readonly ToolTip shaderObjectTip = new ToolTip();
         volatile bool busy;
         Action<bool> showAdvanced; // FEAT-GTS-438
         // Home: the picture over the whole window with the title, Play and the settings button.
@@ -2571,16 +2570,15 @@ namespace RyGT
                 storage.Controls.Add(Hint("For game data on a hard drive. May help sequential loads; restart required."));
                 shaders = Section(shadersPage, "Compiling");
                 AddOption(shaders, "Precompile shaders on the splash screen", "GPU", "precompile_shaders", true);
-                var shaderObjects = AddOption(shaders, "Shader objects (experimental)", "GPU", "shader_objects", false);
-                shaderObjectTip.SetToolTip(shaderObjects, "Experimental: may cause rendering issues. Unavailable on AMD GPUs.");
-                // FEAT-GTS-445 (from RyGT7's PERF-GT7-111/117 and PERF-GT7-108; RyGT-Team/rygt7#3): shader
-                // pre-translation (SHADGT_MANIFEST_RECORD / SHADGT_MANIFEST_PRETRANSLATE) and the compile pack
-                // (SHADGT_COMPILE_PACK). FEAT-GTS-285: pre-translation is on unless unchecked (the
-                // renderer's default since shadGT FEAT-GTS-478); the compile pack is off unless checked.
+                // FEAT-GTS-445 (from RyGT7's PERF-GT7-111/117; RyGT-Team/rygt7#3): shader pre-translation
+                // (SHADGT_MANIFEST_RECORD / SHADGT_MANIFEST_PRETRANSLATE). FEAT-GTS-285: on unless unchecked
+                // (the renderer's default since shadGT FEAT-GTS-478).
+                // FIX-RT-028: the "Shader objects (experimental)" and compile pack options (GPU.shader_objects,
+                // GPU.compile_pack; the pack needs shader objects) are gone: shader objects caused rendering
+                // issues and are off on every GPU (shadGT FIX-GT7-147), and a player who had them on kept
+                // running a path nobody tests. GT Sport now always starts with SHADGT_SHADER_OBJECT=0.
                 AddOption(shaders, "Rebuild translated shaders in the background after a renderer update",
                           "GPU", "shader_pretranslate", true);
-                AddOption(shaders, "Compile the shaders already seen on this PC at start, after a driver update (needs shader objects; may pause races)",
-                          "GPU", "compile_pack", false);
             }
             else
             {
