@@ -572,6 +572,8 @@ namespace RyGT
             AddOption(extras, "PS4 Pro Mode", "GPU", "ps4_pro", false);
             uiHiresBox = AddOption(extras, "Draw the UI at screen resolution", "GPU", "ui_hires", false);
             AddOption(extras, "HDR (experimental; needs Windows HDR on)", "GPU", "hdr_allowed", false);
+            // FEAT-GTS-527: GT Sport stays in SDR until its own HDR Output is on (saved in the game's progression).
+            extras.Controls.Add(Hint("Also turn on HDR Output in the game (Options > Video Output), then set the game's HDR Peak Brightness."));
 
             // ---- Controls: which controller is which player (splitscreen) with a live preview, the
             // controller and keyboard bindings, and racing wheels and pedals (ryty-input.ini /

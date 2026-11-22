@@ -6,6 +6,12 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.13 - 2026-11-22
+
+* FEAT-GTS-527: Under GT Sport's HDR option, a hint says to also turn on HDR Output in the game
+  (Options > Video Output), then to set the game's HDR Peak Brightness. With the launcher's option
+  and Windows HDR on, the game still outputs SDR while its own setting is off.
+
 ## 0.3.12 - 2026-11-21
 
 * FIX-RT-022: GT7's Shaders page offers GT Sport's "Precompile shaders on the splash screen" instead of
