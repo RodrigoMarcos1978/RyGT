@@ -10,7 +10,8 @@ CI fails when the two disagree.
 
 * FEAT-GTS-527: Under GT Sport's HDR option, a hint says to also turn on HDR Output in the game
   (Options > Video Output), then to set the game's HDR Peak Brightness. With the launcher's option
-  and Windows HDR on, the game still outputs SDR while its own setting is off.
+  and Windows HDR on, the game still outputs SDR while its own setting is off. No line separates
+  the hint from its option.
 
 ## 0.3.12 - 2026-11-21
 

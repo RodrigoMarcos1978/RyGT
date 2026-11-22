@@ -657,6 +657,9 @@ namespace RyGT
         float knob = -1; // 0 off .. 1 on, while it slides
         int version;
 
+        /// FEAT-GTS-527: no line under the row (a hint that belongs to the setting follows), as SettingRow.NoLine.
+        public bool NoLine;
+
         public ToggleRow()
         {
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
@@ -696,6 +699,7 @@ namespace RyGT
             float x = track.X + 3 + (track.Width - size - 6) * on;
             Color knobColor = !Enabled ? Color.FromArgb(70, 74, 84) : Anim.Mix(Color.FromArgb(150, 155, 166), Dark.Back, on);
             using (var fill = new SolidBrush(knobColor)) g.FillEllipse(fill, x, track.Y + 3, size, size);
+            if (NoLine) return;
             using (var line = new Pen(Dark.Line)) g.DrawLine(line, 0, Height - 1, Width, Height - 1);
         }
 
