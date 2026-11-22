@@ -1,14 +1,24 @@
 #include <Cli.hpp>
+#include <HostCpu.hpp>
 #include <io/ByteReader.hpp>
 #include <io/ByteWriter.hpp>
+#include <io/Sha256.hpp>
 #include <relinker/parsing/ElfReader.hpp>
 #include <relinker/guest/GuestImage.hpp>
 #include <relinker/analysis/SyscallScanner.hpp>
 #include <elfpatcher/macos/MacOsElfPatcher.hpp>
+#include <elfpatcher/apple/MachOOptions.hpp>
+#include <elfpatcher/apple/CodeSignature.hpp>
+#include <elfpatcher/apple/AppleImages.hpp>
+#include <elfpatcher/apple/Entitlements.hpp>
+#include <elfpatcher/windows/WindowsElfPatcher.hpp>
+#include <elfpatcher/windows/WindowsPeWriter.hpp>
 #include <codegen/IInstructionScanner.hpp>
+#include <codegen/IAmd64OnlyConverter.hpp>
 #include <codegen/x86/IAmd64OnlyInstructionMatcher.hpp>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 
 extern "C" {
 void RytyMetalInitializeDevice(void);
@@ -22,6 +32,9 @@ void RytyMetalDestroyTexture2D(void* handle);
 void* RytyMetalCreateBuffer(const void* data, unsigned long length);
 void RytyMetalUpdateBuffer(void* handle, const void* data, unsigned long length, unsigned long offset);
 void RytyMetalDestroyBuffer(void* handle);
+void RytyMetalCopyBuffer(void* srcHandle, unsigned long srcOffset, void* dstHandle, unsigned long dstOffset, unsigned long length);
+void RytyMetalCopyTexture(void* srcHandle, void* dstHandle, int width, int height);
+unsigned long RytyMetalGetDeviceMaxBufferLength(void);
 void RytyMetalSetViewport(double x, double y, double width, double height, double znear, double zfar);
 void RytyMetalSetScissorRect(unsigned int x, unsigned int y, unsigned int width, unsigned int height);
 void RytyMetalSetBlendMode(int blendMode);
@@ -47,6 +60,7 @@ int RytyMetalGetDeviceCapabilities(void);
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 #include <vector>
 
 extern "C" {
@@ -66,11 +80,436 @@ void TestCliArgs() {
         assert(args.outputPath == "output.bin");
     }
     {
-        const char* argv[] = {"ryty", "--console", "ps5", "--windows", "in.elf", "out.exe"};
-        auto args = Cli::ParseArgs(6, const_cast<char**>(argv));
+        const char* argv[] = {"ryty", "--console", "ps5", "--windows", "--windows-console", "in.elf", "out.exe"};
+        auto args = Cli::ParseArgs(7, const_cast<char**>(argv));
         assert(args.consoleMode == Cli::ConsoleMode::PS5);
         assert(args.toWindows == true);
+        assert(args.windowsConsole == true);
     }
+    // 2.0.0 flags
+    {
+        const char* argv[] = {"ryty", "--version"};
+        auto args = Cli::ParseArgs(2, const_cast<char**>(argv));
+        assert(args.showVersion == true);
+        assert(args.inputPath.empty());
+    }
+    {
+        const char* argv[] = {"ryty", "--verbose", "--verify", "--dry-run", "in.elf", "out.elf"};
+        auto args = Cli::ParseArgs(6, const_cast<char**>(argv));
+        assert(args.verbose == true);
+        assert(args.verifyOutput == true);
+        assert(args.dryRun == true);
+    }
+    {
+        const char* argv[] = {"ryty", "--batch", "./games", "--batch-out", "./out", "--windows"};
+        auto args = Cli::ParseArgs(6, const_cast<char**>(argv));
+        assert(args.batchDir == "./games");
+        assert(args.batchOutDir == "./out");
+        assert(args.inputPath.empty());
+    }
+    {
+        // --batch with a positional input must be rejected
+        const char* argv[] = {"ryty", "--batch", "./games", "in.elf", "out.elf"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(5, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    // 2.0.0 Apple flags
+    {
+        const char* argv[] = {"ryty", "--target", "ios", "--bundle", "--ipa", "in.elf", "out.bin"};
+        auto args = Cli::ParseArgs(7, const_cast<char**>(argv));
+        assert(args.toIos == true);
+        assert(args.toMacOs == false);
+        assert(args.writeBundle == true);
+        assert(args.writeIpa == true);
+        assert(args.TargetName() == "ios");
+        assert(args.IsAppleTarget());
+    }
+    {
+        // The iOS Simulator target: --ios-simulator flag and --target ios-sim
+        // spelling, device-only flags rejected.
+        const char* argv[] = {"ryty", "--target", "ios-sim", "--bundle", "--verify", "in.elf", "out.bin"};
+        auto args = Cli::ParseArgs(7, const_cast<char**>(argv));
+        assert(args.toIosSim == true);
+        assert(args.toIos == false);
+        assert(args.TargetName() == "ios-sim");
+        assert(args.IsAppleTarget());
+        assert(args.IsIosFamily());
+        const char* argvFlag[] = {"ryty", "--ios-simulator", "--entitlements-template", "ios-debug", "in.elf", "out.bin"};
+        auto argsFlag = Cli::ParseArgs(6, const_cast<char**>(argvFlag));
+        assert(argsFlag.toIosSim == true);
+        assert(argsFlag.entitlementsTemplate == "ios-debug");
+        const char* badIpa[] = {"ryty", "--ios-simulator", "--ipa", "in.elf", "out.bin"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(5, const_cast<char**>(badIpa)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+        const char* badProvision[] = {"ryty", "--ios-simulator", "--provision", "dev.mobileprovision", "in.elf", "out.bin"};
+        threw = false;
+        try { (void)Cli::ParseArgs(6, const_cast<char**>(badProvision)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    {
+        // Entitlements template conflict with an explicit plist.
+        const char* argv[] = {"ryty", "--macos", "--entitlements", "a.plist", "--entitlements-template", "macos-jit", "in.elf", "out.bin"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(8, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    {
+        // --ipa packages the .app bundle, so it implies --bundle.
+        const char* argv[] = {"ryty", "--target", "ios", "--ipa", "in.elf", "out.bin"};
+        auto args = Cli::ParseArgs(6, const_cast<char**>(argv));
+        assert(args.toIos == true);
+        assert(args.writeIpa == true);
+        assert(args.writeBundle == true);
+    }
+    {
+        const char* argv[] = {"ryty", "--macos", "--universal", "--hardened-runtime",
+                              "--macos-min", "12.3", "--identifier", "com.ryty.test",
+                              "--entitlements", "dev.plist", "in.elf", "out.bin"};
+        auto args = Cli::ParseArgs(12, const_cast<char**>(argv));
+        assert(args.toMacOs == true);
+        assert(args.universal == true);
+        assert(args.hardenedRuntime == true);
+        assert(args.macOsMinVersion == "12.3");
+        assert(args.identifier == "com.ryty.test");
+        assert(args.entitlementsPath == "dev.plist");
+    }
+    {
+        // Apple option misuse must be rejected.
+        const char* argv[] = {"ryty", "--universal", "in.elf", "out.elf"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(4, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    {
+        const char* argv[] = {"ryty", "--macos", "--ipa", "in.elf", "out.bin"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(5, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    {
+        const char* argv[] = {"ryty", "--macos", "--macos-min", "not.a.version", "in.elf", "out.bin"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(6, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    {
+        // --autorun cannot launch Apple targets (they are not host executables).
+        const char* argv[] = {"ryty", "--ios", "--autorun", "in.elf", "out.bin"};
+        bool threw = false;
+        try { (void)Cli::ParseArgs(5, const_cast<char**>(argv)); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestAppleVersionHelpers() {
+    std::cout << "[Test] Running TestAppleVersionHelpers...\n";
+    assert(Cli::EncodeAppleVersion("11.0") == 0x000B0000u);
+    assert(Cli::EncodeAppleVersion("12.3") == 0x000C0300u);
+    assert(Cli::EncodeAppleVersion("14.2.1") == 0x000E0201u);
+    assert(Cli::EncodeAppleVersion("18") == 0x00120000u);
+    assert(Cli::FormatAppleVersion(0x000E0201u) == "14.2.1");
+    bool threw = false;
+    try { (void)Cli::EncodeAppleVersion("twelve"); } catch (const std::exception&) { threw = true; }
+    assert(threw);
+    threw = false;
+    try { (void)Cli::EncodeAppleVersion("1.2.3.4"); } catch (const std::exception&) { threw = true; }
+    assert(threw);
+    // LC_SOURCE_VERSION packing: matches the 2.2.0 writer convention.
+    assert(Cli::EncodeSourceVersion("2.2.0") == 0x0002020000000000ULL);
+    assert(Cli::EncodeSourceVersion("1.2.3") == 0x0001020300000000ULL);
+    assert(Cli::EncodeSourceVersion(Cli::RYTY_VERSION) == 0x0002020000000000ULL);
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestAppleCodeSignature() {
+    std::cout << "[Test] Running TestAppleCodeSignature...\n";
+    // The verifier locates LC_CODE_SIGNATURE by walking the load commands, so
+    // the synthetic images start with a minimal Mach-O 64 header holding one
+    // LC_CODE_SIGNATURE command that points at the blob appended below.
+    const auto makeSignedImage = [](std::size_t payloadSize, const std::uint8_t* payloadSeed,
+                                    const std::string& identifier,
+                                    const std::vector<std::uint8_t>* entitlements,
+                                    bool hardenedRuntime) {
+        std::vector<std::uint8_t> image(payloadSize, 0);
+        for (std::size_t i = 0; i < image.size(); ++i) image[i] = static_cast<std::uint8_t>((i * 31) ^ payloadSeed[0]);
+        const std::uint32_t signatureSize = Elfpatcher::Apple::AdHocSignatureSize(image.size(), identifier.size(), entitlements);
+#pragma pack(push, 1)
+        struct Header {
+            std::uint32_t magic, cpuType, cpuSubtype, fileType, cmdsCount, cmdsSize, flags, reserved;
+        };
+        struct SigCmd {
+            std::uint32_t cmd, cmdSize, dataOff, dataSize;
+        };
+#pragma pack(pop)
+        Header header{};
+        header.magic = 0xfeedfacf;
+        header.cpuType = 0x01000007;
+        header.cmdsCount = 1;
+        header.cmdsSize = sizeof(SigCmd);
+        SigCmd sigCmd{};
+        sigCmd.cmd = 0x1d; // LC_CODE_SIGNATURE
+        sigCmd.cmdSize = sizeof(SigCmd);
+        sigCmd.dataOff = static_cast<std::uint32_t>(payloadSize);
+        sigCmd.dataSize = signatureSize;
+        std::memcpy(image.data(), &header, sizeof(header));
+        std::memcpy(image.data() + sizeof(header), &sigCmd, sizeof(sigCmd));
+
+        Elfpatcher::Apple::AdHocSignatureSpec spec;
+        spec.image = image.data();
+        spec.codeLimit = image.size();
+        spec.identifier = identifier;
+        spec.entitlements = entitlements;
+        spec.hardenedRuntime = hardenedRuntime;
+        const auto blob = Elfpatcher::Apple::BuildAdHocSignature(spec);
+        assert(blob.size() == signatureSize);
+        image.insert(image.end(), blob.begin(), blob.end());
+        return image;
+    };
+
+    const std::string identifier = "com.ryty.unit-test";
+    // Plain ad-hoc signature: verify OK, tamper detected.
+    {
+        const std::vector<std::uint8_t> seed{0x01};
+        const auto image = makeSignedImage(0x3800, seed.data(), identifier, nullptr, false);
+        const auto result = Elfpatcher::Apple::VerifyAdHocSignature(image.data(), image.size());
+        assert(result.ok);
+        assert(result.identifier == identifier);
+        auto tampered = image;
+        tampered[1234] ^= 0xFF;
+        const auto broken = Elfpatcher::Apple::VerifyAdHocSignature(tampered.data(), tampered.size());
+        assert(!broken.ok);
+        assert(broken.reason.find("hash mismatch") != std::string::npos);
+        auto tamperedSignature = image;
+        // Flip the last stored page-hash byte (the final blob byte is CD
+        // padding, which nothing signs - exactly like codesign).
+        tamperedSignature[tamperedSignature.size() - 2] ^= 0xFF;
+        assert(!Elfpatcher::Apple::VerifyAdHocSignature(tamperedSignature.data(), tamperedSignature.size()).ok);
+    }
+    // Entitlements + hardened runtime: the special slot carries the padded
+    // blob's digest.
+    {
+        const std::string plist = "<plist version=\"1.0\"><dict/></plist>";
+        const std::vector<std::uint8_t> entitlements(plist.begin(), plist.end());
+        const std::vector<std::uint8_t> seed{0x02};
+        const auto image = makeSignedImage(0x2000, seed.data(), identifier, &entitlements, true);
+        const auto result = Elfpatcher::Apple::VerifyAdHocSignature(image.data(), image.size());
+        assert(result.ok);
+        assert(result.hasEntitlements);
+        // Flip one entitlements byte: the special-slot hash must break.
+        auto tampered = image;
+        tampered[tampered.size() - entitlements.size() + 5] ^= 0xFF;
+        const auto broken = Elfpatcher::Apple::VerifyAdHocSignature(tampered.data(), tampered.size());
+        assert(!broken.ok);
+        assert(broken.reason.find("entitlements hash mismatch") != std::string::npos);
+    }
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestAppleImages() {
+    std::cout << "[Test] Running TestAppleImages...\n";
+    Elfpatcher::Apple::MachOOptions options;
+    options.minOs = 0x000C0300u;
+    // The arm64 launcher slice is a well-formed MH_MAGIC_64 arm64 executable.
+    const auto launcher = Elfpatcher::Apple::MakeArm64LauncherSlice(options, "2.2.0");
+    assert(launcher.size() > 0x2000);
+    std::uint32_t magic = 0, cpuType = 0;
+    std::memcpy(&magic, launcher.data(), 4);
+    std::memcpy(&cpuType, launcher.data() + 4, 4);
+    assert(magic == 0xfeedfacf);
+    assert(cpuType == 0x0100000cu);
+    const auto launcherVerify = Elfpatcher::Apple::VerifyAdHocSignature(launcher.data(), launcher.size());
+    assert(launcherVerify.ok);
+    assert(launcherVerify.identifier == "ryty.launcher");
+
+    // The iOS guest image embeds the payload and self-verifies.
+    std::vector<std::uint8_t> payload(0x1234, 0x5A);
+    const auto iosImage = Elfpatcher::Apple::MakeIosGuestImage(payload, options, "2.2.0");
+    std::memcpy(&cpuType, iosImage.data() + 4, 4);
+    assert(cpuType == 0x0100000cu);
+    assert(iosImage.size() > payload.size());
+    // 16 KB segment alignment on iOS: the signature sits on a 16 KB boundary.
+    const auto iosVerify = Elfpatcher::Apple::VerifyAdHocSignature(iosImage.data(), iosImage.size());
+    assert(iosVerify.ok);
+    // The guest payload must be embedded verbatim inside the container.
+    const auto payloadAt = std::search(iosImage.begin(), iosImage.end(), payload.begin(), payload.end());
+    assert(payloadAt != iosImage.end());
+    assert(static_cast<std::size_t>(payloadAt - iosImage.begin()) % 0x4000 == 0);
+
+    // The iOS Simulator container: same arm64 guest layout, but
+    // LC_BUILD_VERSION carries PLATFORM_IOSSIMULATOR (7) and the entitlements
+    // preset lands in the CSSLOT_ENTITLEMENTS blob of the SuperBlob.
+    {
+        Elfpatcher::Apple::MachOOptions simOptions = options;
+        simOptions.platform = Elfpatcher::Apple::MachOOptions::Platform::IosSimulator;
+        const std::string jitPlist = "<plist version=\"1.0\"><dict/></plist>";
+        simOptions.entitlements.assign(jitPlist.begin(), jitPlist.end());
+        const auto simImage = Elfpatcher::Apple::MakeIosGuestImage(payload, simOptions, "2.2.0");
+        std::memcpy(&cpuType, simImage.data() + 4, 4);
+        assert(cpuType == 0x0100000cu);
+        // Walk the load commands: exactly one LC_BUILD_VERSION, platform 7.
+        std::uint32_t ncmds = 0, sizeofcmds = 0;
+        std::memcpy(&ncmds, simImage.data() + 16, 4);
+        std::memcpy(&sizeofcmds, simImage.data() + 20, 4);
+        int buildVersions = 0;
+        std::uint32_t simPlatform = 0;
+        std::size_t offset = 32;
+        for (std::uint32_t i = 0; i < ncmds && offset + 8 <= 32 + sizeofcmds; ++i) {
+            std::uint32_t cmd = 0, cmdSize = 0;
+            std::memcpy(&cmd, simImage.data() + offset, 4);
+            std::memcpy(&cmdSize, simImage.data() + offset + 4, 4);
+            assert(cmdSize >= 8);
+            if (cmd == 0x32 && cmdSize >= 24) { // LC_BUILD_VERSION
+                ++buildVersions;
+                std::memcpy(&simPlatform, simImage.data() + offset + 8, 4);
+            }
+            offset += cmdSize;
+        }
+        assert(buildVersions == 1);
+        assert(simPlatform == 7);
+        const auto simVerify = Elfpatcher::Apple::VerifyAdHocSignature(simImage.data(), simImage.size());
+        assert(simVerify.ok);
+        assert(simVerify.hasEntitlements);
+    }
+
+    // Entitlements templates: valid presets produce plists, unknown names throw.
+    {
+        const auto jit = Elfpatcher::Apple::MakeEntitlementsTemplate("macos-jit", "com.ryty.x");
+        const std::string jitText(jit.begin(), jit.end());
+        assert(jitText.find("com.apple.security.cs.allow-jit") != std::string::npos);
+        const auto device = Elfpatcher::Apple::MakeEntitlementsTemplate("ios-device", "com.ryty.x");
+        const std::string deviceText(device.begin(), device.end());
+        assert(deviceText.find("get-task-allow") != std::string::npos);
+        assert(deviceText.find("<false/>") != std::string::npos);
+        bool threw = false;
+        try { (void)Elfpatcher::Apple::MakeEntitlementsTemplate("does-not-exist", ""); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+        assert(!Elfpatcher::Apple::EntitlementsTemplateNames().empty());
+    }
+
+    // Universal container: fat header, arm64 first, both slices signed.
+    std::vector<std::uint8_t> x86Slice(0x3000, 0);
+    std::memcpy(x86Slice.data(), "\xcf\xfa\xed\xfe", 4);
+    std::memcpy(x86Slice.data() + 4, "\x07\x00\x00\x01", 4); // CPU_TYPE_X86_64
+    const auto fat = Elfpatcher::Apple::MakeUniversalBinary(launcher, x86Slice);
+    std::uint32_t fatMagic = 0, fatCount = 0;
+    std::memcpy(&fatMagic, fat.data(), 4);
+    fatMagic = __builtin_bswap32(fatMagic);
+    std::memcpy(&fatCount, fat.data() + 4, 4);
+    fatCount = __builtin_bswap32(fatCount);
+    assert(fatMagic == 0xcafebabeu);
+    assert(fatCount == 2);
+    const auto firstType = __builtin_bswap32(*reinterpret_cast<const std::uint32_t*>(fat.data() + 8));
+    assert(firstType == 0x0100000cu); // arm64 first
+    const auto firstOffset = __builtin_bswap32(*reinterpret_cast<const std::uint32_t*>(fat.data() + 16));
+    assert(firstOffset % 4096 == 0);
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestConfigFile() {
+    std::cout << "[Test] Running TestConfigFile...\n";
+    const auto tempDir = std::filesystem::temp_directory_path() / "ryty-config-test";
+    std::filesystem::create_directories(tempDir);
+    const auto configPath = tempDir / "port.ini";
+    {
+        std::ofstream file(configPath, std::ios::binary);
+        file << "# ryty options\n"
+             << "to-intel = true\n"
+             << "unused-filter = 2\n"
+             << "rpath = $ORIGIN/mylibs\n"
+             << "target = windows\n"
+             << "windows-console = on\n"
+             << "verbose\n"
+             << "exclude-sce-module = libA.prx\n";
+    }
+
+    Cli::Args args;
+    const auto applied = Cli::ApplyConfigFile(configPath.string(), args);
+    assert(applied.size() == 7);
+    assert(args.toIntel == true);
+    assert(args.unusedFilterLevel == 2);
+    assert(args.runPath == "$ORIGIN/mylibs");
+    assert(args.toWindows == true);
+    assert(args.toMacOs == false);
+    assert(args.windowsConsole == true);
+    assert(args.verbose == true);
+    assert(args.excludedSceModules.count("libA.prx") == 1);
+
+    // Unknown keys are rejected, never silently ignored.
+    {
+        const auto badPath = tempDir / "bad.ini";
+        {
+            std::ofstream file(badPath, std::ios::binary);
+            file << "not-an-option = 1\n";
+        }
+        Cli::Args fresh;
+        bool threw = false;
+        try { (void)Cli::ApplyConfigFile(badPath.string(), fresh); } catch (const std::exception&) { threw = true; }
+        assert(threw);
+    }
+
+    std::filesystem::remove_all(tempDir);
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestSha256() {
+    std::cout << "[Test] Running TestSha256...\n";
+    // FIPS 180-4 vectors
+    {
+        const std::vector<std::uint8_t> empty;
+        assert(Io::Sha256Hex(empty) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+    {
+        const std::string input = "abc";
+        const std::vector<std::uint8_t> bytes(input.begin(), input.end());
+        assert(Io::Sha256Hex(bytes) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    }
+    {
+        // Two-block message ('abcdbcde' + 'cdefdefgdefgdefgdefgdefgdefgdefg')
+        const std::string input = "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq";
+        const std::vector<std::uint8_t> bytes(input.begin(), input.end());
+        assert(Io::Sha256Hex(bytes) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1");
+    }
+    {
+        // Incremental update across block boundaries must match the one-shot
+        std::vector<std::uint8_t> bytes(1000);
+        for (std::size_t index = 0; index < bytes.size(); ++index) bytes[index] = static_cast<std::uint8_t>(index * 7 + 1);
+        Io::Sha256 incremental;
+        for (std::size_t index = 0; index < bytes.size(); index += 37) {
+            const auto chunk = std::min<std::size_t>(37, bytes.size() - index);
+            incremental.Update(bytes.data() + index, chunk);
+        }
+        assert(incremental.FinalHex() == Io::Sha256Hex(bytes));
+    }
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestWindowsPeSubsystem() {
+    std::cout << "[Test] Running TestWindowsPeSubsystem...\n";
+    std::vector<Elfpatcher::Windows::PeSection> sections;
+    sections.push_back({".text", Elfpatcher::Windows::LoadRva, 0x20000020u, {0xc3, 0x90, 0x90, 0x90}});
+    std::array<Elfpatcher::Windows::PeDirectory, 16> directories{};
+
+    // Default: GUI subsystem (2)
+    {
+        Elfpatcher::Windows::WindowsPeWriter writer;
+        auto pe = writer.Write(sections, Elfpatcher::Windows::LoadRva, directories, false);
+        std::uint16_t subsystem = 0;
+        std::memcpy(&subsystem, pe.data() + 0x80 + 24 + 68, 2);
+        assert(subsystem == 2); // IMAGE_SUBSYSTEM_WINDOWS_GUI
+    }
+
+    // Windows Console requested: Console subsystem (3)
+    {
+        Elfpatcher::Windows::WindowsPeWriter writer;
+        auto pe = writer.Write(sections, Elfpatcher::Windows::LoadRva, directories, true);
+        std::uint16_t subsystem = 0;
+        std::memcpy(&subsystem, pe.data() + 0x80 + 24 + 68, 2);
+        assert(subsystem == 3); // IMAGE_SUBSYSTEM_WINDOWS_CUI
+    }
+
     std::cout << "  -> PASSED!\n";
 }
 
@@ -218,12 +657,22 @@ void TestMetalBridge() {
     assert(tex != nullptr);
     uint32_t dummyPixel = 0xff0000ff;
     RytyMetalUpdateTexture2D(tex, &dummyPixel, 4);
+    void* dstTex = RytyMetalCreateTexture2D(256, 256, 80);
+    assert(dstTex != nullptr);
+    RytyMetalCopyTexture(tex, dstTex, 256, 256);
+    RytyMetalDestroyTexture2D(dstTex);
     RytyMetalDestroyTexture2D(tex);
 
     void* buf = RytyMetalCreateBuffer(&dummyPixel, sizeof(dummyPixel));
     assert(buf != nullptr);
     RytyMetalUpdateBuffer(buf, &dummyPixel, sizeof(dummyPixel), 0);
+    void* dstBuf = RytyMetalCreateBuffer(nullptr, sizeof(dummyPixel));
+    assert(dstBuf != nullptr);
+    RytyMetalCopyBuffer(buf, 0, dstBuf, 0, sizeof(dummyPixel));
+    RytyMetalDestroyBuffer(dstBuf);
     RytyMetalDestroyBuffer(buf);
+
+    assert(RytyMetalGetDeviceMaxBufferLength() > 0);
 
     RytyMetalSetViewport(0, 0, 1920, 1080, 0.0, 1.0);
     RytyMetalSetScissorRect(0, 0, 1920, 1080);
@@ -244,7 +693,7 @@ void TestMetalBridge() {
     assert(RytyMetalSupportsFeatureSet(0) != 0);
     RytyMetalSetSampleCount(4);
     RytyMetalSetRasterizerDiscardEnabled(0);
-    assert(RytyMetalGetDeviceCapabilities() == 0x00010100);
+    assert(RytyMetalGetDeviceCapabilities() == 0x00020200);
 
     std::cout << "  -> PASSED!\n";
 }
@@ -264,7 +713,7 @@ void TestByteIo() {
 
 void TestRytyNetBridge() {
     std::cout << "[Test] Running TestRytyNetBridge...\n";
-    assert(RytyNetVersion() == 0x00010100u);
+    assert(RytyNetVersion() == 0x00020200u);
 
     bool isHttps = false;
     std::string host, path;
@@ -285,6 +734,16 @@ void TestRytyNetBridge() {
 
     RytyNetSetEnabled(1);
     assert(RytyNetIsEnabled() == 1);
+
+    // Test HTTPS request handling in bridge
+    RytyNet::HttpRequest httpsReq;
+    httpsReq.isHttps = true;
+    httpsReq.host = "example.com";
+    httpsReq.port = 443;
+    httpsReq.path = "/";
+    auto httpsResp = RytyNet::PerformHttpRequest(httpsReq, 1000);
+    assert(!httpsResp.ok);
+    assert(httpsResp.error == "HTTPS not supported");
 
     RytyNetSetEnabled(0);
     assert(RytyNetIsEnabled() == 0);
@@ -328,6 +787,27 @@ void TestIntelCpuLowering() {
         assert(std::string(match->InstructionName) == "INVLPGA");
         assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
     }
+    {
+        const std::uint8_t vmrun[] = {0x0F, 0x01, 0xD8};
+        auto match = matcher->Match(vmrun, sizeof(vmrun));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "VMRUN");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+    }
+    {
+        const std::uint8_t vmload[] = {0x0F, 0x01, 0xDA};
+        auto match = matcher->Match(vmload, sizeof(vmload));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "VMLOAD");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+    }
+    {
+        const std::uint8_t vmsave[] = {0x0F, 0x01, 0xDB};
+        auto match = matcher->Match(vmsave, sizeof(vmsave));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "VMSAVE");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+    }
 
     // 2. 3DNow! PREFETCH -> PREFETCHT0
     {
@@ -363,6 +843,15 @@ void TestIntelCpuLowering() {
         assert((match->ReplacementBytes[3] & 0x38) == 0x38); // ModRM reg converted to 7 (CLFLUSH)
     }
 
+    // 4b. CLDEMOTE -> NOP
+    {
+        const std::uint8_t cldemote[] = {0x0F, 0x1C, 0x00}; // cldemote [rax]
+        auto match = matcher->Match(cldemote, sizeof(cldemote));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "CLDEMOTE");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+    }
+
     // 5. User-level wait instructions
     {
         const std::uint8_t umonitor[] = {0xF3, 0x0F, 0xAE, 0xF0}; // umonitor eax
@@ -388,6 +877,126 @@ void TestIntelCpuLowering() {
         assert(match->ReplacementBytes[0] == 0xF3 && match->ReplacementBytes[1] == 0x90); // PAUSE
     }
 
+    // 6. PREFETCHW -> PREFETCHT0 opcode swap, FEMMS -> EMMS opcode swap.
+    {
+        const std::uint8_t prefetchw[] = {0x0F, 0x0D, 0x08}; // prefetchw [rax] (ModRM reg=1)
+        auto match = matcher->Match(prefetchw, sizeof(prefetchw));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "PREFETCHW");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+        assert(match->ReplacementBytes[1] == 0x18); // PREFETCHT0
+    }
+    {
+        const std::uint8_t femms[] = {0x0F, 0x0E};
+        auto match = matcher->Match(femms, sizeof(femms));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "FEMMS");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::InPlace);
+        assert(match->ReplacementBytes[1] == 0x77); // EMMS
+    }
+
+    // 7. Trampoline instructions: CLZERO, RDPRU, SHA-256 RNDS2, SSE4a EXTRQ.
+    {
+        const std::uint8_t clzero[] = {0x0F, 0x01, 0xFC};
+        auto match = matcher->Match(clzero, sizeof(clzero));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "CLZERO");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::Trampoline);
+        assert(!match->StubBody.empty());
+    }
+    {
+        const std::uint8_t rdpru[] = {0x0F, 0x01, 0xFD};
+        auto match = matcher->Match(rdpru, sizeof(rdpru));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "RDPRU");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::Trampoline);
+        assert(match->StubBody.size() >= 10); // EDX:EAX = 0
+    }
+    {
+        const std::uint8_t sha256rnds2[] = {0x0F, 0x38, 0xCB, 0xC1}; // sha256rnds2 xmm0, xmm1
+        auto match = matcher->Match(sha256rnds2, sizeof(sha256rnds2));
+        assert(match.has_value());
+        assert(std::string(match->InstructionName) == "SHA256RNDS2");
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::Trampoline);
+        assert(!match->StubBody.empty());
+    }
+    {
+        const std::uint8_t extrq[] = {0x66, 0x0F, 0x79, 0xC1}; // extrq xmm0, xmm1 (register form)
+        auto match = matcher->Match(extrq, sizeof(extrq));
+        assert(match.has_value());
+        assert(match->Lowering == Codegen::Amd64OnlyLowering::Trampoline);
+    }
+
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestAmd64OnlyResidualScan() {
+    std::cout << "[Test] Running TestAmd64OnlyResidualScan...\n";
+    const auto converter = Codegen::MakeAmd64OnlyConverter();
+
+    const auto makeSegment = [](std::size_t size) {
+        Domain::ProgramHeader ph{};
+        ph.Type = 1;      // PT_LOAD
+        ph.Flags = 0x5;   // R+X
+        ph.Offset = 0;
+        ph.MappedAddress = 0x400000;
+        ph.FileSize = size;
+        ph.MemorySize = size;
+        return ph;
+    };
+
+    // An in-place instruction (MONITORX) is reported by the residual scan and
+    // gone after Convert.
+    {
+        std::vector<std::uint8_t> bytes(0x100, 0x90); // NOP sled
+        bytes[0x10] = 0x0F; bytes[0x11] = 0x01; bytes[0x12] = 0xFA; // MONITORX
+        const std::vector<Domain::ProgramHeader> segments{makeSegment(bytes.size())};
+        const auto before = converter->ScanResidual(bytes, segments);
+        assert(before.size() == 1);
+        assert(before[0].InstructionName == "MONITORX");
+        assert(before[0].Offset == 0x10);
+        const auto converted = converter->Convert(bytes, segments);
+        assert(converted.Reports.size() == 1);
+        assert(converter->ScanResidual(converted.Bytes, segments).empty());
+    }
+
+    // A trampoline instruction (CLZERO) is reported by the residual scan and
+    // recorded as a stub site. The converter leaves the site bytes in place; the
+    // patcher writes the jump, so the site is only gone from the finished image
+    // (covered by the CLI integration test).
+    {
+        std::vector<std::uint8_t> bytes(0x100, 0x90);
+        bytes[0x20] = 0x0F; bytes[0x21] = 0x01; bytes[0x22] = 0xFC; // CLZERO
+        const std::vector<Domain::ProgramHeader> segments{makeSegment(bytes.size())};
+        const auto before = converter->ScanResidual(bytes, segments);
+        assert(before.size() == 1);
+        assert(before[0].InstructionName == "CLZERO");
+        const auto converted = converter->Convert(bytes, segments);
+        assert(converted.Trampolines.size() == 1);
+        assert(converted.Trampolines[0].Offset == 0x20);
+        assert(converted.Reports.size() == 1);
+    }
+
+    // A segment with no AMD-only instruction reports nothing.
+    {
+        const std::vector<std::uint8_t> bytes(0x40, 0x90);
+        const std::vector<Domain::ProgramHeader> segments{makeSegment(bytes.size())};
+        assert(converter->ScanResidual(bytes, segments).empty());
+    }
+
+    std::cout << "  -> PASSED!\n";
+}
+
+void TestHostCpuDetection() {
+    std::cout << "[Test] Running TestHostCpuDetection...\n";
+#if defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)
+    // The vendor string is exactly twelve ASCII bytes on x86 hosts.
+    assert(Cli::HostCpuVendor().size() == 12);
+    assert(Cli::HostIsIntel() == (Cli::HostCpuVendor() == "GenuineIntel"));
+#else
+    assert(Cli::HostCpuVendor().empty());
+    assert(!Cli::HostIsIntel());
+#endif
     std::cout << "  -> PASSED!\n";
 }
 
@@ -504,6 +1113,12 @@ void TestGuestModulePath() {
 int main() {
     std::cout << "Starting Ryty Relinker Unit Tests...\n";
     TestCliArgs();
+    TestAppleVersionHelpers();
+    TestAppleCodeSignature();
+    TestAppleImages();
+    TestConfigFile();
+    TestSha256();
+    TestWindowsPeSubsystem();
     TestPs4Detection();
     TestMacOsPatcher();
     TestMetalBridge();
@@ -511,6 +1126,8 @@ int main() {
     TestGuestModulePath();
     TestRytyNetBridge();
     TestIntelCpuLowering();
+    TestAmd64OnlyResidualScan();
+    TestHostCpuDetection();
     std::cout << "All Ryty Relinker Unit Tests Passed Successfully!\n";
     return 0;
 }

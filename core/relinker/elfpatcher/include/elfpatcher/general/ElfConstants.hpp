@@ -55,7 +55,9 @@ inline constexpr std::uint64_t kDefaultLoadAlignment = 0x1000;
 inline constexpr std::uint64_t kPhdrHeaderAlignment = 8;
 inline constexpr std::uint64_t kDynamicHeaderAlignment = 8;
 inline constexpr std::uint64_t kInterpHeaderAlignment = 1;
-inline constexpr std::uint16_t kSyntheticProgramHeaderCount = 4;
+inline constexpr std::uint64_t kGnuStackHeaderAlignment = 16;
+// 2.0.0 porting scheme: the extra synthetic PT_GNU_STACK entry (NX stack).
+inline constexpr std::uint16_t kSyntheticProgramHeaderCount = 5;
 
 inline constexpr std::uint32_t PT_LOAD = 1;
 inline constexpr std::uint32_t PT_DYNAMIC = 2;
@@ -63,6 +65,7 @@ inline constexpr std::uint32_t PT_INTERP = 3;
 inline constexpr std::uint32_t PT_NOTE = 4;
 inline constexpr std::uint32_t PT_PHDR = 6;
 inline constexpr std::uint32_t PT_GNU_RELRO = 0x6474e552;
+inline constexpr std::uint32_t PT_GNU_STACK = 0x6474e551;
 inline constexpr std::uint32_t PF_X = 0x1;
 inline constexpr std::uint32_t PF_W = 0x2;
 inline constexpr std::uint32_t PF_R = 0x4;

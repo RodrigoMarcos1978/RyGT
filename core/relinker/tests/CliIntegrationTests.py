@@ -45,6 +45,106 @@ class CliIntegrationTests(unittest.TestCase):
         self.assertIn("ryty-net/1", marker.read_text(encoding="utf-8"))
         self.assertTrue(any("experimental" in warning for warning in parsed["warnings"]))
 
+    def test_version_flag_prints_release(self):
+        result = subprocess.run([str(RYTY), "--version"], capture_output=True, encoding="utf-8",
+                                errors="replace", timeout=10)
+        self.assertEqual(result.returncode, 0, (result.stdout or "") + (result.stderr or ""))
+        self.assertEqual(result.stdout.strip(), "ryty 2.2.0")
+
+    def test_report_carries_version_and_digests(self):
+        report, _ = self.run_ryty(extra=["--verify"])
+        parsed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertEqual(parsed["schema"], "ryty-port-report/2")
+        self.assertEqual(parsed["version"], "2.2.0")
+        self.assertTrue(parsed["verified"])
+        self.assertEqual(len(parsed["inputSha256"]), 64)
+        self.assertEqual(len(parsed["outputSha256"]), 64)
+        self.assertGreaterEqual(parsed["elapsedMs"], 0.0)
+
+    def test_config_file_applies_options(self):
+        source = self.root / "input.elf"
+        output = self.root / "output.elf"
+        report = self.root / "report.json"
+        source.write_bytes(make_elf("test_nid"))
+        config = self.root / "port.ini"
+        config.write_text("# ryty options\n"
+                          "report = " + str(report) + "\n"
+                          "skip-syscall-check = true\n"
+                          "skip-sce-module = true\n"
+                          "registry = true\n", encoding="utf-8")
+        result = subprocess.run([str(RYTY), "--config", str(config), str(source), str(output)],
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+        self.assertEqual(result.returncode, 0, (result.stdout or "") + (result.stderr or ""))
+        parsed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertTrue(parsed["options"]["skipSyscallCheck"])
+        self.assertTrue(parsed["options"]["skipSceModule"])
+        self.assertTrue((self.root / "output.registry.json").exists())
+
+    def test_config_file_rejects_unknown_key(self):
+        source = self.root / "input.elf"
+        output = self.root / "output.elf"
+        source.write_bytes(make_elf("test_nid"))
+        config = self.root / "bad.ini"
+        config.write_text("nonsense-key = 1\n", encoding="utf-8")
+        result = subprocess.run([str(RYTY), "--config", str(config), str(source), str(output)],
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("nonsense-key", result.stderr)
+
+    def test_dry_run_writes_no_executable(self):
+        source = self.root / "input.elf"
+        output = self.root / "dry.elf"
+        report = self.root / "dry-report.json"
+        source.write_bytes(make_elf("test_nid"))
+        result = subprocess.run([str(RYTY), "--dry-run", "--verify", "--skip-sce-module",
+                                 "--skip-syscall-check", "--report", str(report), str(source), str(output)],
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+        self.assertEqual(result.returncode, 0, (result.stdout or "") + (result.stderr or ""))
+        self.assertFalse(output.exists(), "a dry run must not write the ported executable")
+        self.assertIn("Dry run complete", result.stdout)
+        parsed = json.loads(report.read_text(encoding="utf-8"))
+        self.assertTrue(parsed["dryRun"])
+        self.assertTrue(parsed["verified"])
+
+    def test_batch_mode_ports_every_elf(self):
+        games = self.root / "games"
+        games.mkdir()
+        (games / "eboot.bin").write_bytes(make_elf("first_nid"))
+        (games / "second.elf").write_bytes(make_elf("second_nid"))
+        (games / "notes.txt").write_bytes(b"not an elf at all")
+        result = subprocess.run([str(RYTY), "--batch", str(games), "--skip-sce-module",
+                                 "--skip-syscall-check", "--verify"],
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(result.returncode, 0, (result.stdout or "") + (result.stderr or ""))
+        self.assertIn("2 ported, 0 failed", result.stdout)
+        self.assertIn("Batch report:", result.stdout)
+        self.assertTrue((games / "ported" / "eboot" / "eboot.elf").exists())
+        self.assertTrue((games / "ported" / "second" / "second.elf").exists())
+        batchReport = json.loads((games / "ported" / "batch-report.json").read_text(encoding="utf-8"))
+        self.assertEqual(batchReport["schema"], "ryty-batch-report/1")
+        self.assertEqual(batchReport["version"], "2.2.0")
+        self.assertEqual(batchReport["summary"], {"total": 2, "ported": 2, "failed": 0})
+        perFile = json.loads((games / "ported" / "eboot" / "eboot.elf.report.json").read_text(encoding="utf-8"))
+        self.assertTrue(perFile["verified"])
+
+    def test_batch_mode_reports_failures(self):
+        games = self.root / "games"
+        games.mkdir()
+        (games / "good.bin").write_bytes(make_elf("test_nid"))
+        # An ELF whose dynamic section is broken must fail the port, not the run.
+        broken = bytearray(make_elf("test_nid"))
+        broken[0x200] = 0x7F  # clobber DT_STRTAB tag -> malformed dynamic section
+        (games / "broken.elf").write_bytes(bytes(broken))
+        result = subprocess.run([str(RYTY), "--batch", str(games), "--skip-sce-module",
+                                 "--skip-syscall-check"],
+                                capture_output=True, encoding="utf-8", errors="replace", timeout=60)
+        self.assertEqual(result.returncode, 1, (result.stdout or "") + (result.stderr or ""))
+        self.assertIn("1 ported, 1 failed", result.stdout)
+        batchReport = json.loads((games / "ported" / "batch-report.json").read_text(encoding="utf-8"))
+        self.assertEqual(batchReport["summary"]["ported"], 1)
+        self.assertEqual(batchReport["summary"]["failed"], 1)
+
+
     def test_without_rytynet_flag_no_marker_is_written(self):
         report, _ = self.run_ryty()
         parsed = json.loads(report.read_text(encoding="utf-8"))

@@ -1,4 +1,6 @@
 #include <elfpatcher/macos/MacOsElfPatcher.hpp>
+#include <elfpatcher/apple/AppleImages.hpp>
+#include <elfpatcher/apple/CodeSignature.hpp>
 #include <io/BufferUtils.hpp>
 #include <algorithm>
 #include <cstring>
@@ -47,6 +49,15 @@ extern "C" void RytyMetalUpdateBuffer(void* handle, const void* data, unsigned l
 }
 extern "C" void RytyMetalDestroyBuffer(void* handle) {
     (void)handle;
+}
+extern "C" void RytyMetalCopyBuffer(void* srcHandle, unsigned long srcOffset, void* dstHandle, unsigned long dstOffset, unsigned long length) {
+    (void)srcHandle; (void)srcOffset; (void)dstHandle; (void)dstOffset; (void)length;
+}
+extern "C" void RytyMetalCopyTexture(void* srcHandle, void* dstHandle, int width, int height) {
+    (void)srcHandle; (void)dstHandle; (void)width; (void)height;
+}
+extern "C" unsigned long RytyMetalGetDeviceMaxBufferLength(void) {
+    return 256UL * 1024UL * 1024UL;
 }
 extern "C" void RytyMetalSetViewport(double x, double y, double width, double height, double znear, double zfar) {
     (void)x; (void)y; (void)width; (void)height; (void)znear; (void)zfar;
@@ -104,7 +115,7 @@ extern "C" void RytyMetalSetRasterizerDiscardEnabled(int enabled) {
     (void)enabled;
 }
 extern "C" int RytyMetalGetDeviceCapabilities(void) {
-    return 0x00010100;
+    return 0x00020200; // 2.2.0
 }
 #endif
 
@@ -306,14 +317,14 @@ std::vector<std::uint8_t> makeRpathCommand(const std::string& path) {
     return buf;
 }
 
-std::vector<std::uint8_t> makeBuildVersionCommand() {
+std::vector<std::uint8_t> makeBuildVersionCommand(std::uint32_t platform, std::uint32_t minOs, std::uint32_t sdk) {
     std::vector<std::uint8_t> buf(sizeof(BuildVersionCommand), 0);
     auto* cmd = reinterpret_cast<BuildVersionCommand*>(buf.data());
     cmd->Cmd = LC_BUILD_VERSION;
     cmd->CmdSize = sizeof(BuildVersionCommand);
-    cmd->Platform = 1; // PLATFORM_MACOS
-    cmd->MinOS = 0x000B0000; // macOS 11.0
-    cmd->SDK = 0x000E0000; // macOS 14.0
+    cmd->Platform = platform;
+    cmd->MinOS = minOs;
+    cmd->SDK = sdk;
     cmd->NTools = 0;
     return buf;
 }
@@ -333,12 +344,12 @@ std::vector<std::uint8_t> makeUuidCommand(const std::vector<std::uint8_t>& seed)
     return buf;
 }
 
-std::vector<std::uint8_t> makeSourceVersionCommand() {
+std::vector<std::uint8_t> makeSourceVersionCommand(std::uint64_t version) {
     std::vector<std::uint8_t> buf(sizeof(SourceVersionCommand), 0);
     auto* cmd = reinterpret_cast<SourceVersionCommand*>(buf.data());
     cmd->Cmd = LC_SOURCE_VERSION;
     cmd->CmdSize = sizeof(SourceVersionCommand);
-    cmd->Version = 0x0001000001000000ULL; // 1.1.0.0
+    cmd->Version = version;
     return buf;
 }
 
@@ -374,191 +385,14 @@ std::vector<std::uint8_t> makeCodeSignatureCommand(std::uint32_t offset, std::ui
     return buf;
 }
 
-// ---- Ad-hoc code signing ----------------------------------------------------
-//
-// macOS refuses to execute completely unsigned binaries (SIGKILL "Code Signature
-// Invalid"), so the writer embeds an ad-hoc SuperBlob: a CodeDirectory whose
-// per-page SHA-256 hashes are computed over the finished image (everything up
-// to the signature itself). This mirrors what `codesign -s -` produces for the
-// subset of slots the kernel checks on launch (code directory only, no
-// requirements, entitlements or CMS data).
-
-// SHA-256 (FIPS 180-4), self-contained so the patcher stays toolchain-neutral.
-struct Sha256 {
-    std::uint32_t state[8];
-    std::uint64_t bits;
-    std::uint8_t block[64];
-    std::size_t used;
-
-    Sha256() : state{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19}, bits(0), used(0) {}
-
-    static std::uint32_t rotr(std::uint32_t value, std::uint32_t count) { return (value >> count) | (value << (32 - count)); }
-
-    void compress(const std::uint8_t* chunk) {
-        static constexpr std::uint32_t K[64] = {
-            0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-            0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-            0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-            0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-            0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-            0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-            0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-            0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-        std::uint32_t w[64];
-        for (std::uint32_t i = 0; i < 16; ++i) {
-            w[i] = (static_cast<std::uint32_t>(chunk[i * 4]) << 24) | (static_cast<std::uint32_t>(chunk[i * 4 + 1]) << 16)
-                 | (static_cast<std::uint32_t>(chunk[i * 4 + 2]) << 8) | static_cast<std::uint32_t>(chunk[i * 4 + 3]);
-        }
-        for (std::uint32_t i = 16; i < 64; ++i) {
-            const std::uint32_t s0 = rotr(w[i - 15], 7) ^ rotr(w[i - 15], 18) ^ (w[i - 15] >> 3);
-            const std::uint32_t s1 = rotr(w[i - 2], 17) ^ rotr(w[i - 2], 19) ^ (w[i - 2] >> 10);
-            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
-        }
-        std::uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
-        std::uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
-        for (std::uint32_t i = 0; i < 64; ++i) {
-            const std::uint32_t s1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
-            const std::uint32_t ch = (e & f) ^ (~e & g);
-            const std::uint32_t t1 = h + s1 + ch + K[i] + w[i];
-            const std::uint32_t s0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
-            const std::uint32_t maj = (a & b) ^ (a & c) ^ (b & c);
-            const std::uint32_t t2 = s0 + maj;
-            h = g; g = f; f = e; e = d + t1;
-            d = c; c = b; b = a; a = t1 + t2;
-        }
-        state[0] += a; state[1] += b; state[2] += c; state[3] += d;
-        state[4] += e; state[5] += f; state[6] += g; state[7] += h;
-    }
-
-    void update(const std::uint8_t* data, std::size_t size) {
-        bits += static_cast<std::uint64_t>(size) * 8;
-        while (size > 0) {
-            const std::size_t take = std::min(size, sizeof(block) - used);
-            std::memcpy(block + used, data, take);
-            used += take;
-            data += take;
-            size -= take;
-            if (used == sizeof(block)) {
-                compress(block);
-                used = 0;
-            }
-        }
-    }
-
-    void finish(std::uint8_t digest[32]) {
-        const std::uint64_t totalBits = bits;
-        const std::uint8_t pad = 0x80;
-        update(&pad, 1);
-        const std::uint8_t zero = 0;
-        while (used != 56) update(&zero, 1);
-        std::uint8_t length[8];
-        for (std::uint32_t i = 0; i < 8; ++i) length[i] = static_cast<std::uint8_t>((totalBits >> (56 - i * 8)) & 0xff);
-        std::memcpy(block + 56, length, 8);
-        compress(block);
-        used = 0;
-        for (std::uint32_t i = 0; i < 8; ++i) {
-            digest[i * 4] = static_cast<std::uint8_t>((state[i] >> 24) & 0xff);
-            digest[i * 4 + 1] = static_cast<std::uint8_t>((state[i] >> 16) & 0xff);
-            digest[i * 4 + 2] = static_cast<std::uint8_t>((state[i] >> 8) & 0xff);
-            digest[i * 4 + 3] = static_cast<std::uint8_t>(state[i] & 0xff);
-        }
-    }
-};
-
-static void writeBe32(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint32_t val) {
-    buf[offset] = static_cast<std::uint8_t>((val >> 24) & 0xff);
-    buf[offset + 1] = static_cast<std::uint8_t>((val >> 16) & 0xff);
-    buf[offset + 2] = static_cast<std::uint8_t>((val >> 8) & 0xff);
-    buf[offset + 3] = static_cast<std::uint8_t>(val & 0xff);
-}
-
-static void writeBe64(std::vector<std::uint8_t>& buf, std::size_t offset, std::uint64_t val) {
-    writeBe32(buf, offset, static_cast<std::uint32_t>(val >> 32));
-    writeBe32(buf, offset + 4, static_cast<std::uint32_t>(val & 0xffffffffu));
-}
-
-// Size (in bytes) the CodeDirectory occupies for `binarySize` hashed bytes.
-// CodeDirectory v0x20400 (88-byte header, SHA-256 page hashes) + identifier.
-constexpr std::uint32_t CodeDirectoryHeaderSize = 88;
-constexpr std::uint32_t CodeDirectoryHashSize = 32;
-
-std::uint32_t adHocSignatureSize(std::size_t binarySize, std::size_t identifierLength) {
-    const std::uint32_t nCodeSlots = static_cast<std::uint32_t>((binarySize + 4095) / 4096);
-    const std::uint32_t codeDirectorySize = CodeDirectoryHeaderSize + static_cast<std::uint32_t>(identifierLength) + 1
-        + nCodeSlots * CodeDirectoryHashSize;
-    // SuperBlob: magic + length + count, one BlobIndex entry.
-    return 12 + 8 + codeDirectorySize;
-}
-
-// Builds the ad-hoc SuperBlob over `image[0, binarySize)`. `binarySize` must be
-// the file offset the signature itself is placed at (codeLimit), and the
-// identifier the bundle name recorded in the CodeDirectory.
-std::vector<std::uint8_t> makeAdHocCodeSignatureBlob(const std::uint8_t* image, std::size_t binarySize, const std::string& identifier) {
-    const std::uint32_t nCodeSlots = static_cast<std::uint32_t>((binarySize + 4095) / 4096);
-    const std::uint32_t identOffset = CodeDirectoryHeaderSize;
-    const std::uint32_t hashOffset = identOffset + static_cast<std::uint32_t>(identifier.size()) + 1;
-    const std::uint32_t codeDirTotalSize = hashOffset + nCodeSlots * CodeDirectoryHashSize;
-
-    const std::uint32_t superBlobHeaderSize = 12;
-    const std::uint32_t blobIndexSize = 8;
-    const std::uint32_t totalBlobSize = superBlobHeaderSize + blobIndexSize + codeDirTotalSize;
-
-    std::vector<std::uint8_t> blob(totalBlobSize, 0);
-
-    // SuperBlob header (big endian)
-    writeBe32(blob, 0, 0xfade0cc0); // CSMAGIC_EMBEDDED_SIGNATURE
-    writeBe32(blob, 4, totalBlobSize);
-    writeBe32(blob, 8, 1); // count = 1
-
-    // BlobIndex[0]
-    writeBe32(blob, 12, 0); // type = CSSLOT_CODEDIRECTORY
-    writeBe32(blob, 16, superBlobHeaderSize + blobIndexSize); // offset to CodeDirectory
-
-    // CodeDirectory (version 0x20400: 88-byte header with exec-segment fields)
-    const std::size_t cdOff = superBlobHeaderSize + blobIndexSize;
-    writeBe32(blob, cdOff, 0xfade0c02); // CSMAGIC_CODEDIRECTORY
-    writeBe32(blob, cdOff + 4, codeDirTotalSize);
-    writeBe32(blob, cdOff + 8, 0x00020400); // version (supports SHA-256 + exec seg)
-    writeBe32(blob, cdOff + 12, 0x00000002); // flags = CS_ADHOC
-    writeBe32(blob, cdOff + 16, hashOffset);
-    writeBe32(blob, cdOff + 20, identOffset);
-    writeBe32(blob, cdOff + 24, 0); // nSpecialSlots
-    writeBe32(blob, cdOff + 28, nCodeSlots);
-    writeBe32(blob, cdOff + 32, static_cast<std::uint32_t>(binarySize)); // codeLimit
-    blob[cdOff + 36] = CodeDirectoryHashSize; // hashSize (SHA-256)
-    blob[cdOff + 37] = 2; // hashType = CS_HASHTYPE_SHA256
-    blob[cdOff + 38] = 0; // platform
-    blob[cdOff + 39] = 12; // pageSize (2^12 = 4096)
-    writeBe32(blob, cdOff + 40, 0); // spare2
-    writeBe32(blob, cdOff + 44, 0); // scatterOffset (unused)
-    writeBe32(blob, cdOff + 48, 0); // teamIDOffset (none)
-    writeBe32(blob, cdOff + 52, 0); // spare3
-    // Version 0x20400 extended fields are 64-bit wide.
-    writeBe64(blob, cdOff + 56, binarySize); // codeLimit64
-    writeBe64(blob, cdOff + 64, 0);          // execSegBase (first executable page)
-    writeBe64(blob, cdOff + 72, binarySize); // execSegLimit
-    writeBe64(blob, cdOff + 80, 0x00000001); // execSegFlags = CS_EXECSEG_MAIN_BINARY
-
-    // Identifier
-    std::memcpy(blob.data() + cdOff + identOffset, identifier.c_str(), identifier.size() + 1);
-
-    // Page hashes: SHA-256 over every 4096-byte page of [0, binarySize). The
-    // final partial page is hashed over the bytes it actually has.
-    std::uint8_t* hashes = blob.data() + cdOff + hashOffset;
-    for (std::uint32_t slot = 0; slot < nCodeSlots; ++slot) {
-        const std::size_t pageStart = static_cast<std::size_t>(slot) * 4096;
-        const std::size_t pageBytes = std::min<std::size_t>(4096, binarySize - pageStart);
-        Sha256 hasher;
-        hasher.update(image + pageStart, pageBytes);
-        hasher.finish(hashes + slot * CodeDirectoryHashSize);
-    }
-
-    return blob;
-}
 
 }
 
 MacOsElfPatcher::MacOsElfPatcher() = default;
+
+void MacOsElfPatcher::SetOptions(const Apple::MachOOptions& options) {
+    options_ = options;
+}
 
 std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     const std::vector<std::uint8_t>& sourceElf,
@@ -569,30 +403,47 @@ std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     bool, bool,
     const std::vector<Codegen::TrampolineSite>& trampolines
 ) {
+    // iOS / iOS Simulator target: the guest image is embedded into a signed
+    // arm64 container (read-only __GUEST segment) for the A64 translation
+    // runtime. The x86-64 rebase/trampoline machinery below only applies to
+    // the macOS target, where the guest actually executes.
+    if (options_.IsIosFamily()) {
+        std::cout << (options_.platform == Apple::MachOOptions::Platform::IosSimulator
+                          ? "[Experimental] Building iOS Simulator arm64 guest container (Metal bridge)..."
+                          : "[Experimental] Building iOS arm64 guest container (Metal bridge)...")
+                  << std::endl;
+        RytyMetalInitializeDevice();
+        std::vector<std::uint8_t> guestPayload = sourceElf;
+        return Apple::MakeIosGuestImage(guestPayload, options_, "");
+    }
+
     std::cout << "[Experimental] Building macOS Mach-O bundle with Metal API bridge..." << std::endl;
     RytyMetalInitializeDevice();
 
     // ---- Fixed load commands (kept from the original writer) ----
     const auto dylinkerCmd = makeDylinkerCommand("/usr/lib/dyld");
-    const auto buildVerCmd = makeBuildVersionCommand();
+    const auto buildVerCmd = makeBuildVersionCommand(1 /* PLATFORM_MACOS */, options_.minOs, options_.sdk);
     const auto metalLibCmd = makeDylibCommand("/System/Library/Frameworks/Metal.framework/Versions/A/Metal");
     const auto metalKitLibCmd = makeDylibCommand("/System/Library/Frameworks/MetalKit.framework/Versions/A/MetalKit");
     const auto cocoaLibCmd = makeDylibCommand("/System/Library/Frameworks/Cocoa.framework/Versions/A/Cocoa");
     const auto quartzCoreLibCmd = makeDylibCommand("/System/Library/Frameworks/QuartzCore.framework/Versions/A/QuartzCore");
     const auto libSystemCmd = makeDylibCommand("/usr/lib/libSystem.B.dylib");
     std::vector<std::vector<std::uint8_t>> rpathCmds;
-    std::string rpaths = runPath.empty() ? "@executable_path/libs" : runPath;
-    std::size_t rstart = 0;
-    while (rstart < rpaths.size()) {
-        const auto pos = rpaths.find_first_of(":;", rstart);
-        const std::string path = rpaths.substr(rstart, pos == std::string::npos ? std::string::npos : pos - rstart);
-        if (!path.empty()) {
-            rpathCmds.push_back(makeRpathCommand(path));
+    // 2.0.0 porting scheme: an explicit empty run path (--rpath "") bakes no
+    // LC_RPATH into the image, matching the Linux DT_RUNPATH behaviour.
+    if (!runPath.empty()) {
+        std::string rpaths = runPath;
+        std::size_t rstart = 0;
+        while (rstart < rpaths.size()) {
+            const auto pos = rpaths.find_first_of(":;", rstart);
+            const std::string path = rpaths.substr(rstart, pos == std::string::npos ? std::string::npos : pos - rstart);
+            if (!path.empty()) {
+                rpathCmds.push_back(makeRpathCommand(path));
+            }
+            if (pos == std::string::npos) break;
+            rstart = pos + 1;
         }
-        if (pos == std::string::npos) break;
-        rstart = pos + 1;
     }
-    if (rpathCmds.empty()) rpathCmds.push_back(makeRpathCommand("@executable_path/libs"));
 
     // ---- Parse the incoming (relinked) ELF program headers ----
     struct GuestLoad { std::uint64_t off, vaddr, filesz, memsz; std::uint32_t flags; };
@@ -822,7 +673,7 @@ std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     }
 
     const auto uuidCmd = makeUuidCommand(sourceElf);
-    const auto sourceVerCmd = makeSourceVersionCommand();
+    const auto sourceVerCmd = makeSourceVersionCommand(options_.sourceVersion);
 
     // ---- Ad-hoc code signature layout ----
     // The SuperBlob is placed page-aligned after the symbol/string tables, inside
@@ -830,7 +681,7 @@ std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     // the file in front of it, so its position and size must be fixed before the
     // load commands are written; the hashes themselves are computed over the
     // finished image after assembly.
-    const std::string signatureIdentifier = "ryty.bundle";
+    const std::string signatureIdentifier = options_.identifier.empty() ? std::string("ryty.bundle") : options_.identifier;
     const std::uint32_t signatureCommandCount = 1; // LC_CODE_SIGNATURE
 
     // ---- Compute load command sizes and the page-aligned payload position ----
@@ -877,7 +728,9 @@ std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     const std::uint32_t strTabBytes = static_cast<std::uint32_t>(strTable.size());
     const std::uint64_t symstrBytes = static_cast<std::uint64_t>(symTabBytes) + strTabBytes;
     const std::uint64_t signatureFileOff = (linkeditFileOff + symstrBytes + PageMask) & ~PageMask;
-    const std::uint32_t signatureSize = adHocSignatureSize(signatureFileOff, signatureIdentifier.size());
+    const std::uint32_t signatureSize = Apple::AdHocSignatureSize(
+        signatureFileOff, signatureIdentifier.size(),
+        options_.entitlements.empty() ? nullptr : &options_.entitlements);
     const std::uint64_t linkeditDataSize = (signatureFileOff - linkeditFileOff) + signatureSize;
 
     const auto symtabCmd = makeSymtabCommand(symTabOffset, nSyms, strTabOffset, strTabBytes);
@@ -1049,13 +902,31 @@ std::vector<std::uint8_t> MacOsElfPatcher::Patch(
     // trampolines, symbol and string tables) is hashed page by page.
     padTo(signatureFileOff);
     if (result.size() != signatureFileOff) throw std::runtime_error("macOS writer: signature offset does not match the assembled image");
-    const auto signature = makeAdHocCodeSignatureBlob(result.data(), signatureFileOff, signatureIdentifier);
+    Apple::AdHocSignatureSpec signatureSpec;
+    signatureSpec.image = result.data();
+    signatureSpec.codeLimit = signatureFileOff;
+    signatureSpec.identifier = signatureIdentifier;
+    signatureSpec.entitlements = options_.entitlements.empty() ? nullptr : &options_.entitlements;
+    signatureSpec.hardenedRuntime = options_.hardenedRuntime;
+    const auto signature = Apple::BuildAdHocSignature(signatureSpec);
+    if (signature.size() != signatureSize) throw std::runtime_error("macOS writer: signature size mismatch");
     appendBytes(signature.data(), signature.size());
 
     std::cerr << "[ryty] ad-hoc code signature: offset=0x" << std::hex << signatureFileOff
               << " size=0x" << signatureSize << " pages=" << ((signatureFileOff + 4095) / 4096) << std::dec << "\n";
     std::cerr << "[ryty] e_entry=0x" << std::hex << e_entry << " entryoff=0x" << entryoff
               << std::dec << " | total size " << result.size() << " bytes\n";
+
+    // 2.0.0 --universal: wrap the x86_64 guest slice with a native arm64
+    // Rosetta launcher so Apple Silicon Macs run the port out of the box.
+    if (options_.universal) {
+        Apple::MachOOptions launcherOptions = options_;
+        launcherOptions.identifier = "ryty.launcher";
+        const auto launcher = Apple::MakeArm64LauncherSlice(launcherOptions, "");
+        std::cerr << "[ryty] universal binary: arm64 launcher " << launcher.size()
+                  << " bytes + x86_64 guest slice " << result.size() << " bytes\n";
+        return Apple::MakeUniversalBinary(launcher, result);
+    }
     return result;
 }
 

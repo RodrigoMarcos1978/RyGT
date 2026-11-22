@@ -1,10 +1,18 @@
 add_executable(ryty
         ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/ConfigFile.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/PortScheme.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/PortOne.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/BatchRunner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/Autorun.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxGuestModuleWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsElfPatcher.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/CodeSignature.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/AppleImages.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/AppleBundle.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/Entitlements.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestModuleWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestStartup.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestImageReader.cpp
@@ -30,6 +38,8 @@ add_executable(ryty
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/Sha256.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ZipWriter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
@@ -80,10 +90,16 @@ if(BUILD_TESTING)
             ${CMAKE_SOURCE_DIR}/core/libs/prx/libRytyNet/src/RytyNetBridge.cpp
             ${CMAKE_SOURCE_DIR}/core/libs/prx/libRytyNet/Export.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/CliArgs.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/ConfigFile.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/PortScheme.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/cli/src/Autorun.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxElfPatcher.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/linux/LinuxGuestModuleWriter.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/macos/MacOsElfPatcher.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/CodeSignature.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/AppleImages.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/AppleBundle.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/apple/Entitlements.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestModuleWriter.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/elfpatcher/src/windows/WindowsGuestStartup.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/src/guest/GuestImageReader.cpp
@@ -109,6 +125,8 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/io/src/BufferUtils.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileReader.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/io/src/FileWriter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/Sha256.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/io/src/ZipWriter.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/Amd64OnlyConverter.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/InstructionScanner.cpp
             ${CMAKE_CURRENT_SOURCE_DIR}/codegen/src/x86/X64InstructionDecoder.cpp
@@ -177,6 +195,15 @@ if(BUILD_TESTING)
                 $<TARGET_FILE:ryty>)
         add_test(NAME macos_signature_tests COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/MacOsSignatureTests.py
+                $<TARGET_FILE:ryty>)
+        add_test(NAME apple_target_tests COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/AppleTargetTests.py
+                $<TARGET_FILE:ryty>)
+        add_test(NAME port_scheme_tests COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/PortSchemeTests.py
+                $<TARGET_FILE:ryty>)
+        add_test(NAME intel_lowering_tests COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/IntelLoweringTests.py
                 $<TARGET_FILE:ryty>)
     endif()
 endif()

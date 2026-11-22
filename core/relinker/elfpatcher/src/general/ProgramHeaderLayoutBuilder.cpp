@@ -26,6 +26,24 @@ void ProgramHeaderLayoutBuilder::_writeProgramHeader(std::vector<std::uint8_t>& 
     _byteWriter->WriteU64(buf, offset + kPhdrAlignOffset, ph.Alignment);
 }
 
+// 2.0.0 porting scheme: every Linux port declares a non-executable stack.
+// The PS4/PS5 images either drop their PT_GNU_STACK with the other OS
+// segments (SegmentFilter) or carry an executable one, and the kernel then
+// assumes an executable stack for the whole process. Re-adding the entry with
+// RW permissions restores standard NX behaviour on the host.
+Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeGnuStackHeader() const {
+    Domain::ProgramHeader ph{};
+    ph.Type = PT_GNU_STACK;
+    ph.Flags = PF_R | PF_W;
+    ph.Offset = 0;
+    ph.MappedAddress = 0;
+    ph.PhysicalAddress = 0;
+    ph.FileSize = 0;
+    ph.MemorySize = 0;
+    ph.Alignment = kGnuStackHeaderAlignment;
+    return ph;
+}
+
 Domain::ProgramHeader ProgramHeaderLayoutBuilder::_makeLoadHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const {
     Domain::ProgramHeader ph{};
     ph.Type = PT_LOAD;
@@ -203,6 +221,12 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     {
         const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
         _writeProgramHeader(buf, phEntOff, _makeInterpHeader(request.InterpOffset, interpVaddr, request.InterpSize));
+        writtenPh++;
+    }
+
+    {
+        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+        _writeProgramHeader(buf, phEntOff, _makeGnuStackHeader());
         writtenPh++;
     }
 

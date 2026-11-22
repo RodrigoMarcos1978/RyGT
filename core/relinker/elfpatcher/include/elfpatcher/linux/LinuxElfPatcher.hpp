@@ -32,11 +32,16 @@ public:
         const std::vector<Codegen::TrampolineSite>& trampolines
     ) override;
 
+    // 2.0.0 porting scheme: dynamic loader path baked into PT_INTERP
+    // (--interp). Defaults to the glibc x86-64 loader.
+    void SetInterpreter(std::string interpreter);
+
 private:
     std::shared_ptr<IEntryStubBuilder> _entryStubBuilder;
     std::shared_ptr<IProgramHeaderLayoutBuilder> _programHeaderLayoutBuilder;
     std::shared_ptr<ISectionHeaderTableBuilder> _sectionHeaderTableBuilder;
     std::shared_ptr<Io::IByteWriter> _byteWriter;
+    std::string _interpreter = "/lib64/ld-linux-x86-64.so.2";
 
     void _appendDynEntry(std::vector<std::uint8_t>& buf, std::int64_t tag, std::uint64_t val) const;
     void _appendTrampoline(std::vector<std::uint8_t>& buf, const Codegen::TrampolineSite& site, std::uint64_t extraBlockOffset, const std::function<std::uint64_t(std::uint64_t)>& vaddrOfExtraBlockOffset) const;

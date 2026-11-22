@@ -45,7 +45,9 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     for (const auto& dependency : dependencies) needed.push_back(addString(dependency));
     if (needsTlsResolver) needed.push_back(addString("ld-linux-x86-64.so.2"));
     const auto soname = addString(image.OutputName);
-    const auto search = addString(runPath);
+    // 2.0.0 porting scheme: an empty run path omits DT_RUNPATH from the guest
+    // module as well, mirroring the executable behaviour.
+    const auto search = runPath.empty() ? 0u : addString(runPath);
     const auto strAddress = address();
     bytes.insert(bytes.end(), strings.begin(), strings.end());
     Io::AlignBuffer(bytes, 8);
@@ -79,7 +81,7 @@ std::vector<std::uint8_t> GuestModuleWriter::WriteLinux(const Relinker::GuestIma
     const auto tag = [&](std::uint64_t key, std::uint64_t value) { Io::AppendU64(bytes, key); Io::AppendU64(bytes, value); };
     for (const auto offset : needed) tag(1, offset);
     tag(14, soname);
-    tag(29, search);
+    if (search != 0) tag(29, search);
     tag(4, hashAddress);
     tag(5, strAddress);
     tag(10, strings.size());
