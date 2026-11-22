@@ -6,12 +6,19 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
-## 0.3.13 - 2026-11-22
+## 0.3.14 - 2026-11-22
 
 * FEAT-GTS-527: Under GT Sport's HDR option, a hint says to also turn on HDR Output in the game
   (Options > Video Output), then to set the game's HDR Peak Brightness. With the launcher's option
   and Windows HDR on, the game still outputs SDR while its own setting is off. No line separates
   the hint from its option.
+
+## 0.3.13 - 2026-11-22
+
+* FIX-RT-024: When GT7's Set up cannot link a game file, it says so when the drive is not NTFS (exFAT or
+  FAT32, often a removable drive): Windows links files only on NTFS, so keeping RyGT on the game's drive
+  or turning on Developer Mode, which the message suggested alone, could not help. It also gives
+  Windows' error code.
 
 ## 0.3.12 - 2026-11-21
 
