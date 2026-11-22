@@ -6,6 +6,13 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.15 - 2026-11-22
+
+* FIX-RT-025: Add DLSS files accepts NVIDIA's nvngx_dlss.dll under Proton. Its company and description
+  are read from the DLL itself: Wine Mono's FileVersionInfo left them empty, so the DLL was refused as
+  "not an NVIDIA DLSS library". A file that can't be copied no longer stops the others, and the result
+  lists what was not copied and why; before, a refused nvngx_dlss.dll said no files were found.
+
 ## 0.3.14 - 2026-11-22
 
 * FEAT-GTS-527: Under GT Sport's HDR option, a hint says to also turn on HDR Output in the game

@@ -15,6 +15,115 @@ using System.Text;
 
 namespace RyGT
 {
+    /// FIX-RT-025: a DLL's version strings (CompanyName, FileDescription, ...) read from its PE file
+    /// in managed code. Under Proton the launcher runs on Wine Mono, whose FileVersionInfo came back
+    /// without NVIDIA's CompanyName and FileDescription, so Add DLSS files refused NVIDIA's own
+    /// nvngx_dlss.dll (RyGT issue 79). Returns an empty map for anything it can't read.
+    internal static class PeVersionStrings
+    {
+        public static Dictionary<string, string> Read(string path)
+        {
+            var strings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                byte[] file = File.ReadAllBytes(path);
+                byte[] version = VersionResource(file);
+                if (version != null) Walk(version, 0, version.Length, strings, 0);
+            }
+            catch (Exception) { }
+            return strings;
+        }
+
+        static int U16(byte[] b, int at) { return b[at] | b[at + 1] << 8; }
+        static int I32(byte[] b, int at) { return b[at] | b[at + 1] << 8 | b[at + 2] << 16 | b[at + 3] << 24; }
+
+        /// The first RT_VERSION resource's bytes, or null.
+        static byte[] VersionResource(byte[] f)
+        {
+            if (f.Length < 0x40 || U16(f, 0) != 0x5a4d) return null;
+            int pe = I32(f, 0x3c);
+            if (pe < 0 || pe + 24 > f.Length || I32(f, pe) != 0x4550) return null;
+            int sections = U16(f, pe + 6), optional = pe + 24, optionalSize = U16(f, pe + 20);
+            int magic = U16(f, optional);
+            int dirs = optional + (magic == 0x20b ? 112 : 96);
+            if (dirs + 8 * 3 > f.Length) return null;
+            int rsrcRva = I32(f, dirs + 8 * 2);
+            if (rsrcRva == 0) return null;
+            int table = optional + optionalSize;
+            Func<int, int> offset = rva =>
+            {
+                for (int i = 0; i < sections; i++)
+                {
+                    int s = table + 40 * i;
+                    if (s + 40 > f.Length) break;
+                    int va = I32(f, s + 12), size = Math.Max(I32(f, s + 8), I32(f, s + 16)), raw = I32(f, s + 20);
+                    if (rva >= va && rva < va + size) return raw + (rva - va);
+                }
+                return -1;
+            };
+            int root = offset(rsrcRva);
+            if (root < 0) return null;
+            // Type 16 (RT_VERSION), then its first name and first language.
+            int types = Entry(f, root, root, 16);
+            if (types < 0) return null;
+            int names = Entry(f, root, types, -1);
+            if (names < 0) return null;
+            int leaf = Entry(f, root, names, -1);
+            if (leaf < 0 || leaf + 8 > f.Length) return null;
+            int data = offset(I32(f, leaf)), length = I32(f, leaf + 4);
+            if (data < 0 || length <= 0 || data + length > f.Length) return null;
+            var bytes = new byte[length];
+            Buffer.BlockCopy(f, data, bytes, 0, length);
+            return bytes;
+        }
+
+        /// In the resource directory at `dir`, the offset (from the file start) that entry `id` (or
+        /// the first entry for -1) points to.
+        static int Entry(byte[] f, int root, int dir, int id)
+        {
+            if (dir + 16 > f.Length) return -1;
+            int count = U16(f, dir + 12) + U16(f, dir + 14);
+            for (int i = 0; i < count; i++)
+            {
+                int e = dir + 16 + 8 * i;
+                if (e + 8 > f.Length) return -1;
+                int name = I32(f, e), target = I32(f, e + 4);
+                if (id >= 0 && ((name & int.MinValue) != 0 || name != id)) continue;
+                return root + (target & 0x7fffffff);
+            }
+            return -1;
+        }
+
+        /// VS_VERSIONINFO blocks: wLength, wValueLength, wType, key, padding, value, children.
+        /// String blocks (inside StringFileInfo's tables) give the key/value pairs.
+        static void Walk(byte[] b, int start, int end, Dictionary<string, string> strings, int depth)
+        {
+            int at = start;
+            while (at + 6 <= end && depth < 4)
+            {
+                int length = U16(b, at), valueLength = U16(b, at + 2), type = U16(b, at + 4);
+                if (length < 6 || at + length > end) return;
+                int keyEnd = at + 6;
+                while (keyEnd + 1 < at + length && (b[keyEnd] != 0 || b[keyEnd + 1] != 0)) keyEnd += 2;
+                string key = Encoding.Unicode.GetString(b, at + 6, keyEnd - (at + 6));
+                int value = (keyEnd + 2 + 3) & ~3;
+                // A String's value length counts UTF-16 characters (some linkers leave its wType 0).
+                int valueBytes = type == 1 || depth == 3 ? valueLength * 2 : valueLength;
+                if (depth == 3 && value + valueBytes <= at + length)
+                {
+                    string text = Encoding.Unicode.GetString(b, value, valueBytes).TrimEnd('\0');
+                    if (!strings.ContainsKey(key)) strings[key] = text;
+                }
+                else if (depth < 3 && (depth != 1 || key == "StringFileInfo"))
+                {
+                    int children = (value + valueBytes + 3) & ~3;
+                    if (children < at + length) Walk(b, children, at + length, strings, depth + 1);
+                }
+                at = (at + length + 3) & ~3;
+            }
+        }
+    }
+
     internal static class DlssDownload
     {
         internal const string DlssVersion = "310.9.16";

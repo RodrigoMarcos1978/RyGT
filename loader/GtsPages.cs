@@ -312,30 +312,9 @@ namespace RyGT
                     if (dialog.ShowDialog(this) != DialogResult.OK) return;
                     var names = new[] { "nvngx_dlss.dll", "nvngx_dlssg.dll", "sl.interposer.dll", "sl.common.dll",
                                         "sl.dlss_g.dll", "sl.reflex.dll", "sl.pcl.dll", "NvLowLatencyVk.dll" };
-                    int copied = 0;
-                    try
-                    {
-                        Directory.CreateDirectory(dlssDir);
-                        foreach (var name in names)
-                        {
-                            // Found anywhere under the picked folder (the SDKs keep them in bin\x64).
-                            var found = Directory.GetFiles(dialog.SelectedPath, name, SearchOption.AllDirectories);
-                            if (found.Length == 0) continue;
-                            // The upscaler is checked to be NVIDIA's 64-bit DLSS library, and the one
-                            // it replaces is kept as a .bak (#61).
-                            if (name == "nvngx_dlss.dll") InstallDlssLibrary(found[0], dlssDir);
-                            else File.Copy(found[0], Path.Combine(dlssDir, name), true);
-                            ++copied;
-                        }
-                    }
-                    catch (Exception e)
-                    {
-                        MessageBox.Show(this, "Could not copy the DLSS files: " + e.Message);
-                    }
+                    string report = CopyDlssFiles(dialog.SelectedPath, names, dlssDir);
                     refreshDlss();
-                    MessageBox.Show(this, copied == 0
-                        ? "No DLSS files were found in that folder."
-                        : "Copied " + copied + " DLSS file(s) into the dlss folder.");
+                    MessageBox.Show(this, report);
                 }
             };
             graphics.Controls.Add(addDlss);
