@@ -27,6 +27,10 @@ void LinuxElfPatcher::_appendDynEntry(std::vector<std::uint8_t>& buf, std::int64
     _byteWriter->AppendU64(buf, val);
 }
 
+void LinuxElfPatcher::SetInterpreter(std::string interpreter) {
+    if (!interpreter.empty()) _interpreter = std::move(interpreter);
+}
+
 void LinuxElfPatcher::_appendTrampoline(
     std::vector<std::uint8_t>& buf,
     const Codegen::TrampolineSite& site,
@@ -97,10 +101,15 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     const auto dynStrOff = static_cast<std::uint64_t>(buf.size());
     for (std::uint8_t b : dynSection.DynStrData)
         buf.push_back(b);
-    const std::uint64_t runPathStrOff = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
-    for (char c : runPath)
-        buf.push_back(static_cast<std::uint8_t>(c));
-    buf.push_back(0);
+    // 2.0.0 porting scheme: an empty --rpath "" omits DT_RUNPATH entirely
+    // (the guest resolves its dependencies purely through DT_NEEDED paths).
+    std::uint64_t runPathStrOff = 0;
+    if (!runPath.empty()) {
+        runPathStrOff = static_cast<std::uint64_t>(buf.size()) - dynStrOff;
+        for (char c : runPath)
+            buf.push_back(static_cast<std::uint8_t>(c));
+        buf.push_back(0);
+    }
     alignBuf(buf, kDynStrAlignment);
 
     const auto dynSymOff = static_cast<std::uint64_t>(buf.size());
@@ -147,7 +156,8 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     }
     if (!lazyBinding)
         _appendDynEntry(dynSegBuf, DT_FLAGS, DF_BIND_NOW);
-    _appendDynEntry(dynSegBuf, DT_RUNPATH, runPathStrOff);
+    if (!runPath.empty())
+        _appendDynEntry(dynSegBuf, DT_RUNPATH, runPathStrOff);
     _appendDynEntry(dynSegBuf, DT_NULL, 0);
 
     const auto dynSegOff = static_cast<std::uint64_t>(buf.size());
@@ -165,11 +175,13 @@ std::vector<std::uint8_t> LinuxElfPatcher::Patch(
     for (const auto& site : trampolines)
         _appendTrampoline(buf, site, extraBlockOff, vaddrOfExtraBlockOffset);
 
-    static constexpr char kInterp[] = "/lib64/ld-linux-x86-64.so.2";
+    // 2.0.0 porting scheme: the loader path is configurable (--interp) so a
+    // port can target musl hosts (/lib/ld-musl-x86_64.so.1) or a sysroot.
     const auto interpOff = static_cast<std::uint64_t>(buf.size());
-    constexpr std::uint64_t interpSize = sizeof(kInterp);
-    for (char i : kInterp)
+    const auto interpSize = static_cast<std::uint64_t>(_interpreter.size()) + 1;
+    for (char i : _interpreter)
         buf.push_back(static_cast<std::uint8_t>(i));
+    buf.push_back(0);
 
     const std::uint64_t extraBlockSize = static_cast<std::uint64_t>(buf.size()) - extraBlockOff;
 

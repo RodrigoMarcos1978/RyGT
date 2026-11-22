@@ -148,7 +148,11 @@ std::vector<GuestArtifact> GuestModuleBuilder::Build(const std::filesystem::path
     for (const auto& name : hostLibraries) addNeeded(name);
     std::string guestRunPath = runPath;
     if (!windows) {
-        if (guestRunPath == "$ORIGIN") guestRunPath = "$ORIGIN/" + up;
+        // 2.0.0 porting scheme: an empty run path is valid - the guest modules
+        // then carry no DT_RUNPATH / LC_RPATH of their own (mirrors --rpath "").
+        if (guestRunPath.empty()) {
+            guestRunPath.clear();
+        } else if (guestRunPath == "$ORIGIN") guestRunPath = "$ORIGIN/" + up;
         else if (guestRunPath.starts_with("$ORIGIN/")) guestRunPath.insert(8, up + "/");
         else if (guestRunPath == "@executable_path") guestRunPath = "@executable_path/" + up;
         else if (guestRunPath.starts_with("@executable_path/")) guestRunPath.insert(17, up + "/");

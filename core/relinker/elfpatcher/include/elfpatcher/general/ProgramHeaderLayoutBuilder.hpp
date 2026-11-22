@@ -31,6 +31,7 @@ namespace Elfpatcher {
         [[nodiscard]] Domain::ProgramHeader _makePhdrHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
         [[nodiscard]] Domain::ProgramHeader _makeDynamicHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
         [[nodiscard]] Domain::ProgramHeader _makeInterpHeader(std::uint64_t offset, std::uint64_t vaddr, std::uint64_t size) const;
+        [[nodiscard]] Domain::ProgramHeader _makeGnuStackHeader() const;
         [[nodiscard]] std::uint32_t _fixLoadFlags(std::uint32_t originalFlags) const;
         void _writeProgramHeader(std::vector<std::uint8_t>& buf, std::size_t offset, const Domain::ProgramHeader& ph) const;
     };
