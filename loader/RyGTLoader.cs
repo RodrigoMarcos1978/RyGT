@@ -3843,6 +3843,36 @@ namespace RyGT
         }
 
 
+        /// Add DLSS files: copies each of `names` found anywhere under `folder` (the SDKs keep them in
+        /// bin\x64) into the dlss folder and says what was done. The upscaler is checked to be NVIDIA's
+        /// 64-bit DLSS library, and the one it replaces is kept as a .bak (#61). FIX-RT-025: a file that
+        /// can't be copied no longer stops the others; before, a refused nvngx_dlss.dll (the first name)
+        /// left every file out and the result said none were found (RyGT issue 79).
+        internal static string CopyDlssFiles(string folder, string[] names, string dlssDir)
+        {
+            int copied = 0;
+            var problems = new List<string>();
+            try { Directory.CreateDirectory(dlssDir); }
+            catch (Exception e) { return "Could not make the dlss folder: " + e.Message; }
+            foreach (var name in names)
+            {
+                try
+                {
+                    var found = Directory.GetFiles(folder, name, SearchOption.AllDirectories);
+                    if (found.Length == 0) continue;
+                    if (name == "nvngx_dlss.dll") InstallDlssLibrary(found[0], dlssDir);
+                    else File.Copy(found[0], Path.Combine(dlssDir, name), true);
+                    ++copied;
+                }
+                catch (Exception e) { problems.Add(name + ": " + e.Message); }
+            }
+            string result = copied == 0 && problems.Count == 0
+                ? "No DLSS files were found in that folder."
+                : "Copied " + copied + " DLSS file(s) into the dlss folder.";
+            if (problems.Count != 0) result += "\r\n\r\nNot copied:\r\n" + string.Join("\r\n", problems);
+            return result;
+        }
+
         internal static void InstallDlssLibrary(string source, string directory)
         {
             if (!string.Equals(Path.GetFileName(source), "nvngx_dlss.dll", StringComparison.OrdinalIgnoreCase))
@@ -3862,10 +3892,20 @@ namespace RyGT
                 if ((reader.ReadUInt16() & 0x2000) == 0 || reader.ReadUInt16() != 0x20b)
                     throw new InvalidDataException("DLSS requires a 64-bit Windows DLL.");
             }
-            var version = FileVersionInfo.GetVersionInfo(source);
-            if ((version.CompanyName ?? "").IndexOf("NVIDIA", StringComparison.OrdinalIgnoreCase) < 0 ||
-                (version.FileDescription ?? "").IndexOf("DLSS", StringComparison.OrdinalIgnoreCase) < 0)
-                throw new InvalidDataException("The selected file is not an NVIDIA DLSS library.");
+            // FIX-RT-025: the version strings are read from the file itself, Windows' FileVersionInfo
+            // only as a fallback (Wine Mono's left them empty under Proton, RyGT issue 79).
+            var strings = PeVersionStrings.Read(source);
+            string company, description;
+            if (!strings.TryGetValue("CompanyName", out company) || !strings.TryGetValue("FileDescription", out description))
+            {
+                var version = FileVersionInfo.GetVersionInfo(source);
+                company = version.CompanyName;
+                description = version.FileDescription;
+            }
+            if ((company ?? "").IndexOf("NVIDIA", StringComparison.OrdinalIgnoreCase) < 0 ||
+                (description ?? "").IndexOf("DLSS", StringComparison.OrdinalIgnoreCase) < 0)
+                throw new InvalidDataException("The selected file is not an NVIDIA DLSS library (company \"" + company +
+                                               "\", description \"" + description + "\").");
             string destination = Path.Combine(directory, "nvngx_dlss.dll");
             if (string.Equals(Path.GetFullPath(source), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase)) return;
             Directory.CreateDirectory(directory);
