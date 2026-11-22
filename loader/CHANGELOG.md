@@ -6,6 +6,13 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.16 - 2026-11-22
+
+* FIX-RT-026: An archived log keeps its `.log` extension: `stdout-20261122T172045123Z.log` instead of
+  `stdout.log.20261122T172045123Z` (also stderr, setup and the runtime's own rotation). GitHub refused to
+  attach a file ending in a timestamp, so players could not upload the log of the session that failed.
+  Archives from older builds keep their names.
+
 ## 0.3.15 - 2026-11-22
 
 * FIX-RT-025: Add DLSS files accepts NVIDIA's nvngx_dlss.dll under Proton. Its company and description

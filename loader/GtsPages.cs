@@ -1307,7 +1307,7 @@ namespace RyGT
                 // session could not be resumed anyway, and the restart hid the crash from the player
                 // and ran a second session under the first one's launch (tests mixed the two).
                 if (RendererReportedDeviceLoss(logDirectory))
-                    AppendSetupLog(root, GameInfo.GTSport.TitleId, "Vulkan lost the GPU device (" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "); GT Sport was closed and is not started again. Its log: " + Path.Combine(logDirectory, "stdout.log") + ", renamed stdout.log.<UTC time> at the next start (the first one after this time).");
+                    AppendSetupLog(root, GameInfo.GTSport.TitleId, "Vulkan lost the GPU device (" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "); GT Sport was closed and is not started again. Its log: " + Path.Combine(logDirectory, "stdout.log") + ", renamed stdout-<UTC time>.log at the next start (the first one after this time).");
             });
         }
     }
