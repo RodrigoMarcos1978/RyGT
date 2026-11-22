@@ -571,7 +571,12 @@ namespace RyGT
             AddOption(extras, "Disable motion blur", "GPU", "disable_motion_blur", false);
             AddOption(extras, "PS4 Pro Mode", "GPU", "ps4_pro", false);
             uiHiresBox = AddOption(extras, "Draw the UI at screen resolution", "GPU", "ui_hires", false);
-            AddOption(extras, "HDR (experimental; needs Windows HDR on)", "GPU", "hdr_allowed", false);
+            var hdr = (ToggleRow)AddOption(extras, "HDR (experimental; needs Windows HDR on)", "GPU", "hdr_allowed", false);
+            // FEAT-GTS-527: GT Sport stays in SDR until its own HDR Output is on (saved in the game's progression).
+            hdr.NoLine = true;
+            var hdrHint = Hint("Also turn on HDR Output in the game (Options > Video Output), then set the game's HDR Peak Brightness.");
+            hdrHint.Margin = new Padding(0, 0, 0, 30); // the page's last control: its bottom padding is lost when scrolled
+            extras.Controls.Add(hdrHint);
 
             // ---- Controls: which controller is which player (splitscreen) with a live preview, the
             // controller and keyboard bindings, and racing wheels and pedals (ryty-input.ini /
