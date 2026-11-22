@@ -16,20 +16,31 @@ inline std::string Timestamp() {
     const year_month_day date{day};
     const hh_mm_ss clock{now - day};
     char stamp[40];
-    std::snprintf(stamp, sizeof(stamp), ".%04d%02u%02uT%02lld%02lld%02lld%03lldZ",
+    std::snprintf(stamp, sizeof(stamp), "%04d%02u%02uT%02lld%02lld%02lld%03lldZ",
         int(date.year()), unsigned(date.month()), unsigned(date.day()),
         static_cast<long long>(clock.hours().count()), static_cast<long long>(clock.minutes().count()),
         static_cast<long long>(clock.seconds().count()), static_cast<long long>(clock.subseconds().count()));
     return stamp;
 }
 
-inline bool Archive(const std::filesystem::path& source, const std::filesystem::path& base) {
+// FIX-RT-026: an archived log keeps its extension: stdout-20261122T172045123Z.log, not
+// stdout.log.20261122T172045123Z. GitHub (and other sites) refused to attach a file whose
+// extension is a timestamp, so players could not upload the log of the session that failed.
+// `tag` marks a log moved from the package root ("-legacy"); `i` resolves a same-millisecond
+// collision ("-1", "-2", ...).
+inline std::filesystem::path ArchivePath(const std::filesystem::path& current, const std::string& stamp,
+                                         const std::string& tag, unsigned i) {
+    auto name = current.stem().string() + "-" + stamp + tag + (i ? "-" + std::to_string(i) : "");
+    return current.parent_path() / (name + current.extension().string());
+}
+
+inline bool Archive(const std::filesystem::path& source, const std::filesystem::path& current,
+                    const std::string& tag = {}) {
     std::error_code error;
     if (!std::filesystem::exists(source, error)) return !error;
     const auto stamp = Timestamp();
     for (unsigned i = 0; i < 10000; ++i) {
-        auto target = base;
-        target += stamp + (i ? "." + std::to_string(i) : "");
+        const auto target = ArchivePath(current, stamp, tag, i);
         // Creating a new link cannot overwrite an existing archive, even if another
         // process archives at the same instant. Copy without overwrite on other volumes.
         std::filesystem::create_hard_link(source, target, error);
@@ -60,9 +71,7 @@ inline std::filesystem::path Prepare(const std::filesystem::path& root, const st
             error.clear();
         }
     }
-    auto legacyBase = current;
-    legacyBase += ".legacy";
-    if (!Archive(root / name, legacyBase) || !Archive(current, current)) return {};
+    if (!Archive(root / name, current, "-legacy") || !Archive(current, current)) return {};
     return current;
 }
 }

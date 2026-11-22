@@ -18,7 +18,7 @@ int main() {
             Require(StdoutLevel::Enabled(message, minimum) == (message >= minimum), "severity threshold");
     }
     Require(StdoutLevel::Parse("invalid") == 3 && StdoutLevel::Parse(" warning \r") == 3, "Warning default");
-    const auto root = fs::temp_directory_path() / ("RyGT-portable-logs" + RuntimeLogFiles::Timestamp());
+    const auto root = fs::temp_directory_path() / ("RyGT-portable-logs-" + RuntimeLogFiles::Timestamp());
     Require(fs::create_directory(root), "unique test directory");
     try {
         Require(StdoutLevel::Read(root / "missing.ini") == 3, "missing setting default");
@@ -27,7 +27,9 @@ int main() {
         for (const auto* name : {"stdout.log", "stderr.log", "setup.log"}) {
             { std::ofstream previous(root / name); previous << "legacy"; }
             auto path = RuntimeLogFiles::Prepare(root, name);
-            Require(path == root / "logs" / name, "logs folder");
+            // GAME-004: logs\<serial> (the test was left at logs\ when that came in).
+            const auto logs = root / "logs" / GameSerial::GameSerial();
+            Require(path == logs / name, "logs folder");
             Require(!fs::exists(root / name), "legacy migration");
             for (unsigned i = 0; i < 30; ++i) {
                 { std::ofstream current(path); current << "session " << i; }
@@ -36,8 +38,12 @@ int main() {
             }
             unsigned archived = 0;
             bool legacy = false;
-            for (const auto& file : fs::directory_iterator(root / "logs")) {
-                if (!file.path().filename().string().starts_with(std::string(name) + ".")) continue;
+            for (const auto& file : fs::directory_iterator(logs)) {
+                // FIX-RT-026: archives are <stem>-<UTC time>[-legacy][-N]<extension>.
+                const fs::path base{name};
+                const auto archive = file.path().filename().string();
+                if (!archive.starts_with(base.stem().string() + "-") ||
+                    file.path().extension() != base.extension()) continue;
                 ++archived;
                 std::ifstream input(file.path()); std::string contents;
                 std::getline(input, contents);

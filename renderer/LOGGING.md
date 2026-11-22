@@ -19,10 +19,12 @@ Active logs are in the package's `logs` directory:
 - `setup.log` belongs to a setup operation.
 
 Before opening a log for a new session or setup operation, the previous file is
-archived with a UTC timestamp, for example
-`stdout.log.20261018T223045123Z`. A numeric suffix prevents timestamp collisions
-from replacing an archive. Legacy logs in the package root are migrated into
-`logs` with a `legacy` marker. Archives are retained until manually removed.
+archived with a UTC timestamp before its extension, for example
+`stdout-20261018T223045123Z.log` (FIX-RT-026: the `.log` extension stays last so
+the file can be attached to a GitHub issue). A numeric suffix (`-1`, `-2`, ...)
+prevents timestamp collisions from replacing an archive. Legacy logs in the
+package root are migrated into `logs` with a `-legacy` marker. Archives made by
+older builds keep their old names (`stdout.log.20261018T223045123Z`). Archives are retained until manually removed.
 The runtime preserves inherited Windows standard handles, including debugger
 or terminal redirection, as before.
 

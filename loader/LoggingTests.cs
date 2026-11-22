@@ -40,7 +40,8 @@ namespace RyGT
                         File.WriteAllText(active, "new-" + repeat);
                     }
                     var archives = Array.FindAll(Directory.GetFiles(Path.Combine(root, "logs", "CUSA03220")),
-                        path => Path.GetFileName(path).StartsWith(name + ".", StringComparison.Ordinal));
+                        path => Path.GetFileName(path).StartsWith(Path.GetFileNameWithoutExtension(name) + "-", StringComparison.Ordinal) &&
+                                Path.GetExtension(path) == Path.GetExtension(name)); // FIX-RT-026
                     Check(archives.Length == 12, "every prior log retained");
                     Check(Array.Exists(archives, path => File.ReadAllText(path) == "legacy"), "legacy contents retained");
                     Check(Array.Exists(archives, path => File.ReadAllText(path) == "old"), "prior contents retained");
@@ -59,9 +60,10 @@ namespace RyGT
                 restored = Activator.CreateInstance(settingsType, new object[] { ini });
                 Check((string)levelField.GetValue(restored) == "Warning", "invalid launcher level falls back to Warning");
                 string directory = Path.Combine(root, "logs", "CUSA03220");
-                File.WriteAllText(Path.Combine(directory, "stdout.log.same"), "keep");
-                Check(LogFiles.ArchiveName(directory, "stdout.log", "same").EndsWith(".same.1"), "timestamp collision suffix");
-                Check(File.ReadAllText(Path.Combine(directory, "stdout.log.same")) == "keep", "archive never overwritten");
+                File.WriteAllText(Path.Combine(directory, "stdout-same.log"), "keep");
+                Check(Path.GetFileName(LogFiles.ArchiveName(directory, "stdout.log", "same")) == "stdout-same-1.log", "timestamp collision suffix");
+                Check(Path.GetFileName(LogFiles.ArchiveName(directory, "stdout.log", "other")) == "stdout-other.log", "archive keeps the .log extension");
+                Check(File.ReadAllText(Path.Combine(directory, "stdout-same.log")) == "keep", "archive never overwritten");
             }
             finally { Directory.Delete(root, true); }
             Console.WriteLine("PASS: Warning default, settings persistence, migration and lossless rotation");

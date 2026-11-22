@@ -14,11 +14,16 @@ namespace RyGT
             return 3; // Warning is the default, including invalid settings.
         }
 
+        /// FIX-RT-026: an archived log keeps its extension: stdout-20261122T172045123Z.log, not
+        /// stdout.log.20261122T172045123Z. GitHub refused to attach a file whose extension is a
+        /// timestamp, so players could not upload the log of the session that failed. "-1", "-2", ...
+        /// resolve a same-millisecond collision (as the runtime's LogFiles.hpp names them).
         internal static string ArchiveName(string directory, string name, string stamp)
         {
-            string path = Path.Combine(directory, name + "." + stamp);
+            string stem = Path.GetFileNameWithoutExtension(name), extension = Path.GetExtension(name);
+            string path = Path.Combine(directory, stem + "-" + stamp + extension);
             for (int i = 1; File.Exists(path); ++i)
-                path = Path.Combine(directory, name + "." + stamp + "." + i);
+                path = Path.Combine(directory, stem + "-" + stamp + "-" + i + extension);
             return path;
         }
 
@@ -43,7 +48,7 @@ namespace RyGT
             Directory.CreateDirectory(directory);
             string stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmssfff'Z'", System.Globalization.CultureInfo.InvariantCulture);
             string legacy = Path.Combine(root, name);
-            if (File.Exists(legacy)) File.Move(legacy, ArchiveName(directory, name, stamp + ".legacy"));
+            if (File.Exists(legacy)) File.Move(legacy, ArchiveName(directory, name, stamp + "-legacy"));
             string current = Path.Combine(directory, name);
             if (File.Exists(current)) File.Move(current, ArchiveName(directory, name, stamp));
             return current;
