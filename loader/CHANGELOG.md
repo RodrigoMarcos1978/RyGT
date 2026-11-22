@@ -6,6 +6,13 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.13 - 2026-11-22
+
+* FIX-RT-024: When GT7's Set up cannot link a game file, it says so when the drive is not NTFS (exFAT or
+  FAT32, often a removable drive): Windows links files only on NTFS, so keeping RyGT on the game's drive
+  or turning on Developer Mode, which the message suggested alone, could not help. It also gives
+  Windows' error code.
+
 ## 0.3.12 - 2026-11-21
 
 * FIX-RT-022: GT7's Shaders page offers GT Sport's "Precompile shaders on the splash screen" instead of
