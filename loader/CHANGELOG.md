@@ -6,6 +6,14 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.17 - 2026-11-22
+
+* FIX-RT-028: GT Sport's Shaders page no longer offers "Shader objects (experimental)" or "Compile the
+  shaders already seen on this PC at start, after a driver update" (the compile pack, which needed shader
+  objects). Shader objects caused rendering issues and are off on every GPU; GT Sport now always starts with
+  them off. Saved GPU.shader_objects and GPU.compile_pack entries are offered for removal as obsolete
+  settings. The Advanced page can still set SHADGT_SHADER_OBJECT for a test.
+
 ## 0.3.16 - 2026-11-22
 
 * FIX-RT-026: An archived log keeps its `.log` extension: `stdout-20261122T172045123Z.log` instead of

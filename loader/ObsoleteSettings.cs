@@ -15,6 +15,9 @@ namespace RyGT
         static readonly string[][] Entries =
         {
             new[] { "GPU", "quality_preset", "replaced by System memory (GPU.system_ram_gb)" },
+            // FIX-RT-028: GT Sport's shader object options were removed; shader objects are always off.
+            new[] { "GPU", "shader_objects", "removed: shader objects are always off" },
+            new[] { "GPU", "compile_pack", "removed: it needed shader objects" },
         };
 
         /// The obsolete entries present in `config`, as "Section.key - what replaced it".

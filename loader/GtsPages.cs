@@ -1224,10 +1224,8 @@ namespace RyGT
                     bool antiLag = ReadSetting("GPU", "anti_lag", false) &&
                                    !ReadSetting("GPU", "framegen_enabled", false) &&
                                    !ReadSetting("GPU", "dlssg_enabled", false);
-                    bool shaderObjects = ReadSetting("GPU", "shader_objects", false);
-                    StartGameGts(root, settings.HddStreaming, experimentalSceneSize, antiLag, shaderObjects,
-                              ReadSetting("GPU", "shader_pretranslate", true), ReadSetting("GPU", "compile_pack", false),
-                              CustomEnvironment.Copy(settings.Env));
+                    StartGameGts(root, settings.HddStreaming, experimentalSceneSize, antiLag,
+                              ReadSetting("GPU", "shader_pretranslate", true), CustomEnvironment.Copy(settings.Env));
                     status.Text = "GT Sport is starting. Logs: logs\\stdout.log and logs\\stderr.log.";
                 }));
             });
@@ -1238,7 +1236,7 @@ namespace RyGT
 
         /// Starts GTSport.exe once, with session log rotation; after a GPU device loss it is not started
         /// again (FIX-GTS-491), the setup log says so.
-        static void StartGameGts(string root, bool hddStreaming, Size? sceneSize, bool antiLag, bool shaderObjects, bool shaderPretranslate, bool compilePack, List<EnvVar> customEnv)
+        static void StartGameGts(string root, bool hddStreaming, Size? sceneSize, bool antiLag, bool shaderPretranslate, List<EnvVar> customEnv)
         {
             string exe = Path.Combine(root, "GTSport.exe");
             // Preserve GT Sport metadata while migrating the launcher publisher field from older installs.
@@ -1270,14 +1268,13 @@ namespace RyGT
                     start.EnvironmentVariables["SHADGT_GAME"] = "gts";
                     start.EnvironmentVariables["RYGT_HDD_STREAMING"] = hddStreaming ? "1" : "0";
                     start.EnvironmentVariables["SHADGT_ANTI_LAG"] = antiLag ? "1" : "0"; // PERF-210
-                    start.EnvironmentVariables["SHADGT_SHADER_OBJECT"] = shaderObjects ? "1" : "0";
+                    // FIX-RT-028: shader objects are always off (the launcher's option is gone); the Advanced
+                    // page, applied below, can still turn them on for a test.
+                    start.EnvironmentVariables["SHADGT_SHADER_OBJECT"] = "0";
                     // FEAT-GTS-445 from the Shaders card. Pre-translation: each shader translation leaves
                     // a record (shaders\<serial>.manifest) and its code (shaders\<serial>.capture, this
                     // PC's only); at start, the ones the shader store lacks (after a renderer update)
-                    // are translated again in the background. The compile pack: the pipelines this PC's
-                    // driver cache lacks (after a driver update) are compiled at start from the recipes
-                    // kept. Only when checked, so a script that sets them itself keeps its setting (and
-                    // the Advanced page, applied below, still wins).
+                    // are translated again in the background.
                     // FEAT-GTS-285: on by default (the renderer's default too), so unchecked turns
                     // it off.
                     if (shaderPretranslate)
@@ -1289,7 +1286,6 @@ namespace RyGT
                     {
                         start.EnvironmentVariables["SHADGT_MANIFEST_PRETRANSLATE"] = "0";
                     }
-                    if (compilePack) start.EnvironmentVariables["SHADGT_COMPILE_PACK"] = "1";
                     // FEAT-GTS-433: the user's list last, so it wins; only the count is logged.
                     int custom = CustomEnvironment.Apply(start, customEnv);
                     if (custom > 0) AppendSetupLog(root, GameInfo.GTSport.TitleId, custom + " custom environment variable(s) applied.");
