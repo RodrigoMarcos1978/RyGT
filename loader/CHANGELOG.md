@@ -6,6 +6,15 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.19 - 2026-11-23
+
+* FEAT-GT7-187/189: GT7 gets a Trophies page. It reads trophy files the player already extracted into
+  user\trophy\<npCommId> (Xml\TROPCONF.XML, Xml\TROP.XML, Icons) and shows the trophy list with what is
+  earned, the pop-up switch, a pop-up preview and a custom folder for cups, sounds and font. RyGT does not
+  decrypt the game's trophy files and asks for no key; a trophy key file left by an earlier test build is
+  deleted. The built-in cups, chimes and Inter font are embedded in RyGTLauncher.exe. GT7 only. Needs the
+  renderer side (shadGT #75).
+
 ## 0.3.18 - 2026-11-22
 
 * FIX-RT-029: Set up (GT7 and GT Sport) shows "Set up: decrypt your game dump first", naming the file, when a

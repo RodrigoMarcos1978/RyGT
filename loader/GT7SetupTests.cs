@@ -125,6 +125,61 @@ namespace RyGT
             Check(BitConverter.ToUInt16(image, 0x608) == 0x17c && BitConverter.ToUInt16(image, 0x60a) == (0xa000 | 0x170), "Only the overlapping relocation disabled");
             Check(image.Skip(0x400 + 0x180).Take(4).All(b => b == 0xc3), "Patch bytes written");
         }
+        internal static void TrophyFileChecks(string root)
+        {
+            Directory.CreateDirectory(root);
+            Check(TrophyStore.WriteBuiltinAssets(root) == TrophyStore.BuiltinFiles.Length, "Every built-in trophy file is embedded in the launcher");
+            Check(TrophyStore.CupFile(root, 'G') == Path.Combine(TrophyStore.BuiltinDir(root), "gold.png"), "The built-in gold cup is used without a custom one");
+            Check(TrophyStore.FontFile(root) == Path.Combine(TrophyStore.BuiltinDir(root), "font.ttf"), "The built-in font is used without a custom one");
+            string custom = TrophyStore.EnsureCustomFolder(root);
+            Check(File.Exists(Path.Combine(custom, TrophyStore.ReadmeName)), "The custom folder gets its README.txt");
+            File.WriteAllText(Path.Combine(custom, "platinum.wav"), "x");
+            Check(TrophyStore.SoundFile(root, true) == Path.Combine(custom, "platinum.wav"), "A custom sound replaces the built-in one");
+            Check(TrophyStore.SoundFile(root, false) == Path.Combine(TrophyStore.BuiltinDir(root), "trophy.wav"), "A sound the custom folder lacks stays built in");
+            Check(TrophyStore.TestToastPending(root) == '\0', "No test pop-up by default");
+            TrophyStore.SetTestToast(root, 'P');
+            Check(TrophyStore.TakeTestToast(root) == 'P' && TrophyStore.TestToastPending(root) == '\0', "The next-play test pop-up shows once");
+            string id = "NPWR12345_00";
+            Put(Path.Combine(root, "user", "home", "1000", "trophy"), id + ".xml", "<trophyconf/>");
+            Check(TrophyStore.UnlockFiles(root, id).Count == 1, "Progress not moved yet is read from user\\home");
+            Put(TrophyStore.OldProgressDir(root), id + ".xml", "<trophyconf/>");
+            var files = TrophyStore.UnlockFiles(root, id);
+            Check(files.Count == 2 && files[0] == Path.Combine(TrophyStore.OldProgressDir(root), id + ".xml"), "Progress in the old _sd\\trophies_progress beats user\\home");
+            Put(TrophyStore.ProgressDir(root), id + ".xml", "<trophyconf/>");
+            files = TrophyStore.UnlockFiles(root, id);
+            Check(files.Count == 3 && files[0] == Path.Combine(TrophyStore.ProgressDir(root), id + ".xml"), "Progress next to the saves in user\\savedata\\<serial>\\_sd comes first");
+        }
+
+        internal static void TrophyChecks(string root)
+        {
+            string id = "NPWR12345_00";
+            string conf = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!--Sce-Np-Trophy-Signature: " + new string('A', 300) + "-->\n" +
+                          "<trophyconf version=\"1.1\" platform=\"ps4\"><npcommid>" + id + "</npcommid></trophyconf>";
+            string trop = "<trophyconf version=\"1.1\"><title-name>Gran Turismo&#174; 7</title-name>" +
+                          "<trophy id=\"000\" hidden=\"no\" ttype=\"P\" pid=\"-1\"><name>All of them</name><detail>Every trophy</detail></trophy>" +
+                          "<trophy id=\"001\" hidden=\"yes\" ttype=\"G\" pid=\"000\"><name>Secret</name><detail>Hidden one</detail></trophy>" +
+                          "<trophy id=\"002\" hidden=\"no\" ttype=\"B\" pid=\"000\"><name>First</name><detail>Bronze one</detail></trophy></trophyconf>";
+            Check(TrophyXml.LooksLikeTrophyConf(conf), "TROPCONF with Sony's signature comment accepted (real GT7 layout)");
+            Check(!TrophyXml.LooksLikeTrophyConf("\u0012\u00ff\u0034 not xml"), "An encrypted TROPCONF is not taken as extracted");
+            var list = TrophyXml.ParseTrophies(trop);
+            Check(list.Count == 3 && list[0].Grade == 'P' && list[1].Hidden && list[1].Grade == 'G' && list[2].Name == "First" && list[2].Detail == "Bronze one",
+                  "TROP.XML trophies parsed");
+            var unlocks = TrophyXml.ParseUnlocks("<trophyconf><trophy id=\"000\" hidden=\"no\" ttype=\"P\" pid=\"-1\" unlockstate=\"false\" timestamp=\"0\">" +
+                                                 "<name>x</name></trophy><trophy id=\"002\" ttype=\"B\" unlockstate=\"true\" timestamp=\"1763150400\"></trophy></trophyconf>");
+            Check(unlocks.Count == 1 && unlocks.ContainsKey(2) && unlocks[2].HasValue &&
+                  unlocks[2].Value.ToUniversalTime() == new DateTime(2025, 11, 14, 20, 0, 0, DateTimeKind.Utc), "Unlock file read (Unix seconds)");
+            Check(TrophyXml.Timestamp("1763150400000").Value.ToUniversalTime() == new DateTime(2025, 11, 14, 20, 0, 0, DateTimeKind.Utc), "Unix milliseconds");
+            Directory.CreateDirectory(root);
+            var layers = new System.Collections.Generic.List<string>();
+            Directory.CreateDirectory(Path.Combine(TrophyStore.TrophyDir(root), id));
+            bool missing = false;
+            try { TrophySet.Load(root, layers); } catch (FileNotFoundException) { missing = true; }
+            Check(missing, "A trophy folder without TROPCONF.XML is reported as missing trophy files");
+            Put(Path.Combine(TrophyStore.TrophyDir(root), id, "Xml"), "TROPCONF.XML", conf);
+            Put(Path.Combine(TrophyStore.TrophyDir(root), id, "Xml"), "TROP.XML", trop);
+            var set = TrophySet.Load(root, layers);
+            Check(set.NpCommId == id && set.Trophies.Count == 3 && set.TitleName == "Gran Turismo\u00ae 7", "Extracted trophy files read from user\\trophy\\<npCommId>");
+        }
         [STAThread]
         static int Main(string[] args)
         {
@@ -267,6 +322,8 @@ namespace RyGT
                 Check(detailBias == "1" && detailExtra == "0", "DLSS texture detail Reduced: the bias without its extra level");
                 LoaderForm.DlssDetailVariables("off", out detailBias, out detailExtra);
                 Check(detailBias == "0" && detailExtra == null, "DLSS texture detail Off: no bias");
+                TrophyChecks(Path.Combine(root, "trophy-extracted"));
+                TrophyFileChecks(Path.Combine(root, "trophy-files"));
                 Console.WriteLine("PASS: " + checks + " GT7 setup checks");
                 return 0;
             }

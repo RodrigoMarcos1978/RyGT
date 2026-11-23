@@ -665,6 +665,7 @@ namespace RyGT
             BuildOnlinePage();
             // ---- Account: the online account (Online.cs); nothing asks for one at start
             BuildAccountPage();
+            BuildTrophiesPage();
 
             return refresh;
         }
@@ -1416,6 +1417,7 @@ namespace RyGT
                         else start.EnvironmentVariables.Remove("RYGT_NEO_EXTRAS");
                     }
                     // FEAT-GTS-254: the Advanced page's switches and other variables last, so they win.
+                    TrophyStore.ApplyEnvironment(root, start);
                     int customCount = CustomEnvironment.Apply(start, new Settings(GameInfo.GT7.IniPath(root)).Env);
                     if (customCount > 0) AppendSetupLog(root, GameInfo.GT7.TitleId, customCount + " custom environment variable(s) applied.");
                     started = Process.Start(start);
