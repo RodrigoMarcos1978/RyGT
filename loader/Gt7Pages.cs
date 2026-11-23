@@ -850,6 +850,7 @@ namespace RyGT
         /// Set up couldn't use a game or system module file: the dump needs doing again.
         void ShowRedumpHint(DumpFileException problem)
         {
+            if (problem is NotDecryptedException) { ShowNotDecrypted((NotDecryptedException)problem); return; } // FIX-RT-029
             MessageBox.Show(this,
                 "Set up couldn't use this file:\n" + problem.File + "\n\n" + problem.Message + "\n\n" +
                 "Your game dump or system modules (sys_modules) look incomplete or damaged. " +
@@ -933,6 +934,11 @@ namespace RyGT
             Directory.CreateDirectory(convertedModules);
             int code = Run(converter, "--windows --ps4 --skip-syscall-check --registry" + app0Option + " --report \"" +
                 Path.Combine(work, "port-report.json") + "\" \"" + Path.Combine(work, "eboot.elf") + "\" \"" + convertedExe + "\"", work);
+            if (code != 0) // FIX-RT-029: an input the converter couldn't read as an ELF is not a decrypted dump
+            {
+                var notDecrypted = NotDecryptedException.FromConverterLog(Path.Combine(work, "convert.log"), layout.Get("eboot.bin"));
+                if (notDecrypted != null) throw notDecrypted;
+            }
             if (code != 0 || !File.Exists(convertedExe)) throw new Exception("The converter failed (exit code " + code + "); the previous game executable was preserved. See convert\\" + info.TitleId + "\\convert.log.");
             if (offline != null)
             {

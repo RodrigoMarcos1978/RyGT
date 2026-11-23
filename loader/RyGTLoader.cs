@@ -1437,6 +1437,48 @@ namespace RyGT
         public SetupDumpException(string message) : base(null, message) { }
     }
 
+    /// FIX-RT-029: a game or system module file that is not a decrypted dump: a SELF with encrypted
+    /// segments, a file with neither SELF nor ELF magic, or an ELF whose header tables point outside the
+    /// file (what the converter rejects with "Invalid ELF section header table"). Such a file is most
+    /// likely still encrypted, e.g. copied out of an FPKG folder (RyGT#87). Set up says to decrypt the
+    /// dump first instead of showing the converter's generic failure.
+    sealed class NotDecryptedException : DumpFileException
+    {
+        public NotDecryptedException(string file, string message) : base(file, message) { }
+
+        public const string Title = "Set up: decrypt your game dump first";
+
+        public string Explanation
+        {
+            get
+            {
+                return "Set up couldn't use this file:\n" + (File ?? "(unknown)") + "\n\n" + Message + "\n\n" +
+                       "It is not a decrypted dump and is most likely still encrypted, for example a file copied " +
+                       "out of an FPKG or PKG folder. RyGT needs decrypted game files and system modules.\n\n" +
+                       "Decrypt your dump first: dump the game (and sys_modules) from your PS4 with a dumper that " +
+                       "writes decrypted files, select those folders, then run Set up again.";
+            }
+        }
+
+        /// The converter's log after a failed run: its ELF header errors mean an input that is not a
+        /// decrypted dump (the launcher's own check, Self.HeaderProblem, normally finds these first).
+        public static NotDecryptedException FromConverterLog(string log, string source)
+        {
+            try
+            {
+                if (!System.IO.File.Exists(log)) return null;
+                string fail = System.IO.File.ReadAllLines(log).FirstOrDefault(line =>
+                    line.Contains("Invalid ELF section header table") || line.Contains("Invalid ELF program header table") ||
+                    line.Contains("Invalid ELF section string table index") || line.Contains("Invalid ELF magic number") ||
+                    line.Contains("Expected little-endian ELF64 x86-64") || line.Contains("Invalid ELF header size"));
+                if (fail == null) return null;
+                return new NotDecryptedException(source, "The converter could not read the game executable or one of its modules: " +
+                                                         fail.Trim());
+            }
+            catch (Exception) { return null; }
+        }
+    }
+
     /// Unwraps an unencrypted (fake-signed) PS4 SELF into a plain ELF.
     static class Self
     {
@@ -1449,7 +1491,7 @@ namespace RyGT
         {
             if (IsElf(d)) return d;
             if (d.Length < 32 || d[0] != 0x4f || d[1] != 0x15 || d[2] != 0x3d || d[3] != 0x1d)
-                throw new DumpFileException(name, name + " is neither a SELF nor an ELF file.");
+                throw new NotDecryptedException(name, name + " is neither a SELF nor an ELF file.");
             int count = BitConverter.ToUInt16(d, 24);
             var entries = new Dictionary<long, long[]>();
             for (int i = 0; i < count; i++)
@@ -1458,7 +1500,7 @@ namespace RyGT
                 long offset = (long)BitConverter.ToUInt64(d, 40 + i * 32);
                 long size = (long)BitConverter.ToUInt64(d, 48 + i * 32);
                 if ((props & 0xA) != 0)
-                    throw new DumpFileException(name, name + " has encrypted or compressed segments. The dump must be decrypted.");
+                    throw new NotDecryptedException(name, name + " has encrypted or compressed segments. The dump must be decrypted.");
                 if ((props & 0x800) != 0) entries[(props >> 20) & 0xFFF] = new[] { offset, size };
             }
             int elf = 32 + count * 32;
@@ -1491,6 +1533,32 @@ namespace RyGT
                     Array.Copy(d, selfSize, output, offset, fileSize); // PT_SCE_VERSION follows the body
             }
             return output;
+        }
+
+        /// FIX-RT-029: why the converter would reject this ELF's header (the checks of ReadHeader in
+        /// core/relinker/relinker/src/parsing/ElfReader.cpp), or null. A decrypted GT7 or GT Sport eboot.bin
+        /// or module has no section header table (offset and count 0).
+        public static string HeaderProblem(byte[] e)
+        {
+            if (e.Length < 0x40) return "it is too small for an ELF header";
+            if (!IsElf(e)) return "it has no ELF magic";
+            if (e[4] != 2 || e[5] != 1 || e[6] != 1 || BitConverter.ToUInt16(e, 0x12) != 62 || BitConverter.ToUInt32(e, 0x14) != 1)
+                return "it is not a little-endian ELF64 x86-64 file";
+            if (BitConverter.ToUInt16(e, 0x34) != 64) return "its ELF header size is invalid";
+            ulong phoff = BitConverter.ToUInt64(e, 0x20), shoff = BitConverter.ToUInt64(e, 0x28);
+            int phentsize = BitConverter.ToUInt16(e, 0x36), phnum = BitConverter.ToUInt16(e, 0x38);
+            int shentsize = BitConverter.ToUInt16(e, 0x3a), shnum = BitConverter.ToUInt16(e, 0x3c), shstrndx = BitConverter.ToUInt16(e, 0x3e);
+            if (phnum != 0 && (phentsize != 56 || !Fits(phoff, (ulong)phnum * (ulong)phentsize, e.Length)))
+                return "its program header table (offset 0x" + phoff.ToString("x") + ") is outside the file";
+            if (shnum != 0 && (shentsize != 64 || !Fits(shoff, (ulong)shnum * (ulong)shentsize, e.Length)))
+                return "its section header table (offset 0x" + shoff.ToString("x") + ") is outside the file";
+            if (shstrndx != 0 && shstrndx >= shnum) return "its section string table index is invalid";
+            return null;
+        }
+
+        static bool Fits(ulong offset, ulong size, long length)
+        {
+            return offset <= (ulong)length && size <= (ulong)length - offset;
         }
 
         /// Rewrites PT_SCE_RELRO (0x61000010) as a read-write PT_LOAD so the converter maps it and
@@ -2959,6 +3027,12 @@ namespace RyGT
             if (target == GameKind.GT7) PlayGt7(); else PlayGts();
         }
 
+        /// FIX-RT-029: Set up found a game or system module file that is not a decrypted dump.
+        void ShowNotDecrypted(NotDecryptedException problem)
+        {
+            MessageBox.Show(this, problem.Explanation, NotDecryptedException.Title, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+
         void RunSetup()
         {
             MigrateApp0();
@@ -4027,7 +4101,16 @@ namespace RyGT
         {
             var bytes = File.ReadAllBytes(source);
             byte[] elf;
-            try { elf = Self.RelroToLoad(Self.ToElf(bytes, Path.GetFileName(source))); }
+            try
+            {
+                elf = Self.ToElf(bytes, Path.GetFileName(source));
+                // FIX-RT-029: an ELF the converter can't read means the dump is not decrypted (RyGT#87).
+                string problem = Self.HeaderProblem(elf);
+                if (problem != null)
+                    throw new NotDecryptedException(source, Path.GetFileName(source) + " is not a usable ELF: " + problem + ".");
+                elf = Self.RelroToLoad(elf);
+            }
+            catch (NotDecryptedException e) { throw new NotDecryptedException(source, e.Message); }
             catch (DumpFileException e) { throw new DumpFileException(source, e.Message); }
             if (target == GameKind.GT7 && Path.GetFileName(source).Equals("eboot.bin", StringComparison.OrdinalIgnoreCase) && GameLayout.PatchKnownExecutable(elf))
                 Log("Applied the verified CUSA24769 1.00 conversion fix.");
