@@ -1,109 +1,96 @@
-ryGT7: Gran Turismo 7 (CUSA24769) as a native Windows program
-{name} - github.com/RyGT-Team/rygt7
+RyGT: Gran Turismo Sport and Gran Turismo 7 as native Windows programs
+{name} - github.com/RyGT-Team/RyGT
 
-ryGT7 is experimental software derived from ryGT (Gran Turismo Sport) and Ryty, with the
-shadGT7 renderer (derived from shadGT and shadPS4). This is a prerelease: crashes,
-rendering errors and shader compilation stutter happen. Nothing in this archive comes from
-the game or a PS4: you provide your own decrypted dump, firmware modules and fonts.
+RyGT ports Gran Turismo Sport (CUSA03220, update 1.69) and Gran Turismo 7 (CUSA24769) from
+PlayStation 4 to Windows. The games are not emulated: Set up converts each game's executable
+into GTSport.exe or GT7.exe, the game code runs on your CPU, and RyGT's libraries stand in for
+the PS4 system. Graphics go through the shadGT Vulkan renderer. One runtime, one renderer and
+one launcher serve both games, and both can share this folder.
+
+This is experimental software: crashes, rendering errors and shader compilation stutter
+happen. Nothing in this archive comes from the games or a PS4: you provide your own decrypted
+dump, firmware modules and fonts.
 
 Quick start
-  1. Extract this folder to a writable place on the SAME DRIVE as your game dump (the game's
-     files are linked into it, not copied; on another drive Windows Developer Mode must be
-     on). Keep it separate from the game and update folders.
-  2. Run RyGTLauncher.exe and pick:
-       Base game (CUSA24769)   your decrypted base game folder: eboot.bin, sce_sys\param.sfo,
-                               sce_module and contents (gt.idx and the gt*.vol archives)
-       Update                  your decrypted update folder (with its own eboot.bin and
-                               sce_sys); leave it empty when the update is already merged
-                               into the game folder. A separate update overrides the base
-                               game file by file.
-       System modules          a folder with your PS4 firmware's decrypted modules
-                               (libSceFont, libSceFontFt, libSceFreeTypeOt, libSceJson2,
-                               libSceNgs2, and libSceJpegDec and libScePngEnc if you have
-                               them; .sprx or .prx, searched in subfolders too)
+  1. Extract this folder to a short, writable path such as C:\RyGT. Running from inside the
+     zip, or from a deep folder, makes Set up fail on paths longer than Windows allows.
+     For GT7, keep it on the SAME NTFS DRIVE as the GT7 dump: Set up links GT7's files into
+     app0 instead of copying them, and on another drive Windows Developer Mode must be on.
+  2. Run RyGTLauncher.exe and pick the game at the top left.
+  3. On its Game page, pick your folders:
+       Game                    your decrypted base game folder (eboot.bin, sce_sys\param.sfo,
+                               sce_module, ...): GT Sport CUSA03220 or GT7 CUSA24769
+       Update                  your decrypted update folder. GT Sport needs update 1.69. For
+                               GT7, leave it empty when the update is already merged into the
+                               game folder; a separate update overrides the base game file by
+                               file
+       System modules          a folder with your PS4 firmware's decrypted modules (.sprx or
+                               .prx, searched in subfolders too)
        Fonts                   a folder with your PS4 firmware's font and font2 folders
-  3. Press Set up. It converts the game for Windows (a minute or two), gives GT7.exe the
-     game's own icon, links the game files into app0 and copies the fonts. Its log is
-     logs\CUSA24769\setup.log.
-  4. Press Play. Logs are written under logs\.
+  4. Press Set up. It converts the game for Windows (a minute or two). Its log is
+     logs\<serial>\setup.log (CUSA03220 for GT Sport, CUSA24769 for GT7).
+  5. Press Play. Logs are written to logs\<serial>.
+  Do the same for the other game to play both from this folder. Keep the game and update
+  folders in place after Set up: the games read them where they are.
 
-Photos: the game keeps Scapes and race photos in its own format (download0\APP_DATA\photo).
-To get a picture you can open, pick the photo in the game's gallery and choose Export: it is
-written as a JPEG to the Photos folder next to RyGTLauncher.exe (About > Folders in the launcher opens
-it), named after its date and place. Taking a photo does not export it.
+Verified dumps
+  GT Sport: CUSA03220 with update 1.69.
+  GT7: CUSA24769 whose metadata reports APP_VER 01.00. Other GT7 versions can be selected,
+  but the Offline mode patch is only applied to the verified 1.00 executable.
+  Set up says "decrypt your game dump first" when a file in the dump is still encrypted.
 
-Verified: the CUSA24769 dump whose metadata reports APP_VER 01.00, converted in a clean
-folder, to the main menu, Music Rally and races at Deep Forest. Other updates can be
-selected but have not been verified to convert or play. Keep the game and update folders in
-place after Set up: their files are linked, never patched or copied.
+One folder for both games
+  Everything a game writes is named after its serial, so GT Sport (CUSA03220) and GT7
+  (CUSA24769) never touch each other's files: the executable (GTSport.exe, GT7.exe), the
+  launcher settings (<serial>.RyGT.ini), the game settings (user\custom_configs\<serial>.json),
+  the saves (user\savedata\<serial>), shaders\<serial>*, logs\<serial>, and Set up's work in
+  convert\<serial>. Shared on purpose: libs, converter, dlss, the controller bindings and
+  RyGT-Launcher.ini (the game picked last).
 
 State of this build ({date})
-  - Menus, World Map, Music Rally and races run. Races are paced to an even 30 FPS by
-    default; the launcher's Graphics page offers 60. Audio works.
-  - New in 2026-10-30: a redesigned launcher (a home view and a settings view) and online play
-    (hosting and joining rooms through the launcher's Online page, by WackyHacky; online play
-    needs the host's ports forwarded); fewer race hitches from shader compiles (background
-    compiles follow the race frame rate and draws on screen are built first, by WillScarlett);
-    Ryty v1.1.0 (relinker checks, AMD and Intel CPU instruction coverage); Discord shows the
-    official Gran Turismo 7 game; Set up says when the game dump or system modules must be
-    dumped again; Play and Set up wait while the DLSS files download.
-  - New in 2026-10-29b: GT7 always uses the native renderer; the launcher's settings are
-    read from any folder path; a "protect region as write-only" crash during play is fixed;
-    AMD GPUs get the BC6H textures they refused to create (they were missing); far less log
-    spam; Set up no longer leaves a startable GT7.exe in convert\runtime-*.
-  - New in 2026-10-29: the black car at the start of a race is fixed (the hull shaders now
-    see the other patches' control points they read on PS4, and sample the occlusion
-    pyramid's mip levels at their own size); the Upscaling page with an NVIDIA DLSS
-    download button and quality list; cars' shaders compile first on a new shader cache.
-  - Fixed in earlier builds: crowds flickering black or jumping (a shader compiler error made
-    the crowd's GPU writes overlap), the black pit building and other missing streamed
-    textures at Deep Forest, the title screen flicker, black cockpit interiors, the
-    colour glare around the player's car, the green night sky at Yas Marina, the
-    flickering dark shadow band at Alsace, the empty cockpit rear-view mirror, the seam
-    in the sky, and frame stutter from GT7's per-frame memory being tracked page by page.
-  - Known problems: occasional crashes, intermittent GPU device loss (NVIDIA driver reset),
-    black wedges in some replay and flyover shots, cars black or missing for a few seconds in
-    the first race on a new shader cache (a long load the first time a track is visited), background mountains missing from some angles at Deep Forest, busy race
-    sections below 30 FPS. The AMD graphics fix can crash RX 6000 series GPUs when loading
-    into a race: if the game crashes when a race loads, turn it off. Online play is new and was
-    tested by its author only.
+  The release notes on github.com/RyGT-Team/RyGT/releases list what changed in this build.
+  Both games boot, run their menus and races, with audio, controllers and steering wheels.
+  Known problems: shaders compile the first time the game needs them, so the first races on
+  a new track or car can stutter or pause (later visits are smooth; a driver update starts
+  over); occasional crashes and GPU device losses, more often on AMD GPUs.
 
 Options (RyGTLauncher.exe)
-  Display mode and resolution; Upscaling (Off, AMD FSR 1, AMD FSR 3.1 or NVIDIA DLSS, with a
-  quality list that sets the size the 1920x1080 picture is scaled to) and Frame generation
-  (AMD FSR 3.1, or NVIDIA DLSS on RTX 40/50). NVIDIA's DLSS files are not included: the
-  Graphics page's "Download NVIDIA DLSS" button fetches NVIDIA's own signed files from
-  NVIDIA's GitHub, checked against pinned SHA-256 hashes and NVIDIA's signature. Also
-  texture sharpness, controller bindings and ports, steering wheels, shader compilation mode, Discord presence
-  and logging. GT Sport's livery, shader-pack and renderer patch options do not apply to GT7
-  and are gone. Paths are kept in CUSA24769.RyGT.ini next to the launcher (an older folder's RyGT7.ini and
-  RyGT.ini are merged into it); the runtime's settings in
-  user\custom_configs\CUSA24769.json (GT7's serial; an older folder's CUSA03220.json is renamed),
-  and the saves in user\savedata\CUSA24769 (an older folder's _sd and download0 are moved there).
+  Each game has its own pages: Display, Graphics (upscaling and frame generation: AMD FSR,
+  NVIDIA DLSS and others; HDR), Shaders (what happens while new shaders compile), Controls
+  (controllers and steering wheels), Advanced (renderer switches, saved per game), and for
+  GT7 also Account and Online. NVIDIA's DLSS files are not included: the Graphics page's
+  download button fetches NVIDIA's own signed files. Settings > About > Updates updates this
+  folder for both games.
 
-Crash reports (GPU device lost)
-  If the game stops with an NVIDIA device loss, start the launcher from a command prompt
-  after "set RYGT_DEVICE_FAULT=1" (for that launch only). The log in user\log then
-  ends with DIAG-243 lines (the driver's fault report and the last draws); please attach
-  that log to the report. Without the variable nothing changes.
+Crash reports
+  Please attach logs\<serial>\stdout.log and stderr.log from the session that failed, and
+  setup.log for Set up problems. If the game stops with a lost GPU device, turn on
+  SHADGT_DEVICE_FAULT (set it to 1) on the launcher's Advanced page for that game and play
+  until it happens again: stdout.log then ends with DIAG-243 lines (the driver's fault report
+  and the last draws). Report issues at github.com/RyGT-Team/RyGT/issues.
 
-Offline mode patch (included)
-  The Used Cars and Legendary Cars dealerships need the community "Offline mode" patch
+Offline mode patch for GT7 (included)
+  GT7's Used Cars and Legendary Cars dealerships need the community "Offline mode" patch
   (Proper Offline Patch v1.0, ps-patch-system XML for CUSA24769). This release includes
   patches\CUSA24769.xml: Set up automatically applies the file's Offline mode group, and no
   other group, to the converted GT7.exe. The dealerships' catalog is then written to
   data\gt7offline. Set up only applies it to the verified dump's executable and stops
-  otherwise. No separate patch download or copy is needed. Source and credits are in
-  patches\README.md. Car thumbnails in the dealerships stay grey.
+  otherwise. Source and credits are in patches\README.md. Car thumbnails in the dealerships
+  stay grey.
+
+Photos (GT7)
+  GT7 keeps Scapes and race photos in its own format. To get a picture you can open, pick the
+  photo in the game's gallery and choose Export: it is written as a JPEG to the Photos folder
+  next to RyGTLauncher.exe (About > Folders in the launcher opens it).
 
 Files and licenses
-  RyGTLauncher.exe is the launcher (RyGT Launcher, for GT Sport and GT7), converter\ryty.exe the converter, libs\ the runtime libraries
-  including the shadGT7 renderer (libSceVideoOut.prx); the GCC runtime DLLs and AMD
+  RyGTLauncher.exe is the launcher, converter\ryty.exe the converter, libs\ the runtime
+  libraries including the shadGT renderer (libSceVideoOut.prx); the GCC runtime DLLs and AMD
   FidelityFX (amd_fidelityfx_vk.dll) are redistributed with their notices. GPL version 2
-  applies to ryGT7 and shadGT7: LICENSE and the licenses folder hold the notices of
-  everything shipped, including the statically linked open-source dependencies.
-  manifest.json lists every file with its SHA-256 and the source commits this build came from.
-  Source: github.com/RyGT-Team/rygt7 and github.com/RyGT-Team/shadgt7.
+  applies to RyGT and shadGT: LICENSE and the licenses folder hold the notices of everything
+  shipped, including the statically linked open-source dependencies. manifest.json lists
+  every file with its SHA-256 and the source commits this build came from.
+  Source: github.com/RyGT-Team/RyGT and github.com/RyGT-Team/shadGT (branch ryty-gpu).
 
   Gran Turismo is a trademark of Sony Interactive Entertainment. This project is independent
   of Sony and Polyphony Digital. No game data, firmware, fonts, saves or shader caches are
