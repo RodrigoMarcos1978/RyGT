@@ -557,6 +557,59 @@ namespace RyGT
                   "Nothing written to convert outside a game's own folder");
         }
 
+        /// A little-endian ELF64 x86-64 header with one PT_LOAD of 16 bytes at 0x1000, then those bytes.
+        static byte[] TestElf(ulong shoff, ushort shnum)
+        {
+            var e = new byte[0x1010];
+            new byte[] { 0x7f, (byte)'E', (byte)'L', (byte)'F', 2, 1, 1 }.CopyTo(e, 0);
+            BitConverter.GetBytes((ushort)0xfe10).CopyTo(e, 0x10); BitConverter.GetBytes((ushort)62).CopyTo(e, 0x12);
+            BitConverter.GetBytes(1u).CopyTo(e, 0x14); BitConverter.GetBytes(0x40ul).CopyTo(e, 0x20);
+            BitConverter.GetBytes(shoff).CopyTo(e, 0x28); BitConverter.GetBytes((ushort)64).CopyTo(e, 0x34);
+            BitConverter.GetBytes((ushort)56).CopyTo(e, 0x36); BitConverter.GetBytes((ushort)1).CopyTo(e, 0x38);
+            BitConverter.GetBytes((ushort)64).CopyTo(e, 0x3a); BitConverter.GetBytes(shnum).CopyTo(e, 0x3c);
+            BitConverter.GetBytes(1u).CopyTo(e, 0x40); BitConverter.GetBytes(0x1000ul).CopyTo(e, 0x48);
+            BitConverter.GetBytes(0x10ul).CopyTo(e, 0x60); BitConverter.GetBytes(0x10ul).CopyTo(e, 0x68);
+            return e;
+        }
+
+        /// A SELF wrapping TestElf(0, 0) with one segment entry of the given flags (blocked, for segment 0).
+        static byte[] TestSelf(ulong flags)
+        {
+            byte[] elf = TestElf(0, 0);
+            int header = 32 + 32, data = header + 0x40 + 0x38;
+            var d = new byte[data + 0x10];
+            new byte[] { 0x4f, 0x15, 0x3d, 0x1d }.CopyTo(d, 0);
+            BitConverter.GetBytes((ulong)d.Length).CopyTo(d, 16); BitConverter.GetBytes((ushort)1).CopyTo(d, 24);
+            BitConverter.GetBytes(flags | 0x800).CopyTo(d, 32); BitConverter.GetBytes((ulong)data).CopyTo(d, 40);
+            BitConverter.GetBytes(0x10ul).CopyTo(d, 48); BitConverter.GetBytes(0x10ul).CopyTo(d, 56);
+            Array.Copy(elf, 0, d, header, 0x40 + 0x38);
+            return d;
+        }
+
+        static bool NotDecrypted(byte[] file)
+        {
+            try { byte[] elf = Self.ToElf(file, "eboot.bin"); return Self.HeaderProblem(elf) != null; }
+            catch (NotDecryptedException) { return true; }
+        }
+
+        /// FIX-RT-029: Set up tells an encrypted (not decrypted) dump from a usable one before the converter.
+        static void DumpChecks(string root)
+        {
+            Check(!NotDecrypted(TestElf(0, 0)), "A decrypted ELF without sections is usable");
+            Check(!NotDecrypted(TestSelf(0x4)), "A fake-signed SELF (signed, not encrypted) is usable");
+            Check(Self.ToElf(TestSelf(0x4), "eboot.bin").Length == 0x1010, "The fake-signed SELF unwraps to its ELF");
+            Check(NotDecrypted(TestSelf(0x4 | 0x2)), "A SELF with encrypted segments is not decrypted");
+            Check(NotDecrypted(new byte[] { 0x12, 0x34, 0x56, 0x78, 0, 0, 0, 0 }), "A file without SELF or ELF magic is not decrypted");
+            Check(NotDecrypted(TestElf(0xa63e75c, 10)), "RyGT#87: a section header table past the end of the file is not decrypted");
+            Check(!NotDecrypted(TestElf(0x1000, 0)), "A section offset without sections is ignored, as the converter does");
+            string log = Path.Combine(Folder(root, "convert-log"), "convert.log");
+            File.WriteAllLines(log, new[] { "Console: ps4; System: Windows", "FAIL: Invalid ELF section header table (offset 0xa63e75c)" });
+            var fromLog = NotDecryptedException.FromConverterLog(log, @"X:\FPKG\eboot.bin");
+            Check(fromLog != null && fromLog.File == @"X:\FPKG\eboot.bin" && fromLog.Explanation.Contains("decrypt"), "The converter's ELF header error means not decrypted");
+            File.WriteAllLines(log, new[] { "FAIL: relocation out of range" });
+            Check(NotDecryptedException.FromConverterLog(log, "eboot.bin") == null, "Other converter failures keep the generic message");
+        }
+
         static int Main()
         {
             string root = Path.Combine(Path.GetTempPath(), "RyGT-unified-test-" + Guid.NewGuid().ToString("N"));
@@ -572,6 +625,7 @@ namespace RyGT
                 App0Checks(root);
                 SharedNameChecks(root);
                 OneFolderChecks(root);
+                DumpChecks(root);
             }
             catch (Exception e) { Console.Error.WriteLine("FAIL: " + e); return 1; }
             finally { try { Directory.Delete(root, true); } catch { } }

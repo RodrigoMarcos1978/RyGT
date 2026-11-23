@@ -6,6 +6,15 @@ The version lives in `loader/Version.cs`. To release a change, bump
 `LauncherVersion.Value` there and add a section here with the same number;
 CI fails when the two disagree.
 
+## 0.3.18 - 2026-11-22
+
+* FIX-RT-029: Set up (GT7 and GT Sport) shows "Set up: decrypt your game dump first", naming the file, when a
+  game or system module file is not a decrypted dump: a SELF with encrypted segments, a file with neither SELF
+  nor ELF magic, or an ELF whose header tables point outside the file, which the converter rejected with
+  "Invalid ELF section header table" (RyGT#87, an eboot.bin copied out of an FPKG folder). The launcher checks
+  each prepared file the way the converter does before running it, and also reads the converter's log for
+  those errors. Fake-signed (decrypted) SELF dumps are unchanged.
+
 ## 0.3.17 - 2026-11-22
 
 * FIX-RT-028: GT Sport's Shaders page no longer offers "Shader objects (experimental)" or "Compile the

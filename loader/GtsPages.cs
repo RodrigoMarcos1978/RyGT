@@ -953,7 +953,8 @@ namespace RyGT
 
         void ShowSetupDumpHelp(Exception error)
         {
-            if (error is SetupDumpException)
+            if (error is NotDecryptedException) ShowNotDecrypted((NotDecryptedException)error); // FIX-RT-029
+            else if (error is SetupDumpException)
                 MessageBox.Show(this, error.Message, "Check your game dump and system modules",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);
             else if (error is DumpFileException) // a file that is no SELF or ELF, or still encrypted (Self.ToElf)
@@ -1035,6 +1036,11 @@ namespace RyGT
             Directory.CreateDirectory(stagedModules);
             int code = Run(converter, "--windows --ps4 --skip-syscall-check --registry" + app0Option + " --report \"" +
                 Path.Combine(work, "port-report.json") + "\" \"" + Path.Combine(work, "eboot.elf") + "\" \"" + stagedExe + "\"", work);
+            if (code != 0) // FIX-RT-029: an input the converter couldn't read as an ELF is not a decrypted dump
+            {
+                var notDecrypted = NotDecryptedException.FromConverterLog(Path.Combine(work, "convert.log"), Path.Combine(gameDir, "eboot.bin"));
+                if (notDecrypted != null) throw notDecrypted;
+            }
             if (code != 0 || !File.Exists(stagedExe)) throw new Exception("The converter failed (exit code " + code + ").");
             GameExe.Prepare(stagedExe);
             GameExe.ApplyVersionInfo(stagedExe);
