@@ -381,9 +381,9 @@ namespace RyGT
         }
         public static string SoundFile(string root, bool platinum)
         {
-            return platinum ? AssetFile(root, "platinum.wav", "ps5_platinum.wav") : AssetFile(root, "trophy.wav", "ps5_trophy.wav");
+            return platinum ? AssetFile(root, "platinum.wav") : AssetFile(root, "trophy.wav");
         }
-        public static string FontFile(string root) { return AssetFile(root, "font.ttf", "font.otf", Path.Combine("fonts", "SSTRg.ttf")); }
+        public static string FontFile(string root) { return AssetFile(root, "font.ttf", "font.otf"); }
 
         public const string ReadmeText =
 "ryGT7 custom trophy pop-up files\r\n" +
@@ -408,8 +408,7 @@ namespace RyGT
 "  TrueType or OpenType. Names in Chinese, Japanese or Korean always use a built-in font\r\n" +
 "  that carries those characters.\r\n" +
 "\r\n" +
-"Names are not case sensitive. Older names still work: ps5_trophy.wav, ps5_platinum.wav and\r\n" +
-"fonts\\SSTRg.ttf.\r\n" +
+"Names are not case sensitive.\r\n" +
 "\r\n" +
 "The trophy's own picture (the large square on the left) comes from the game and cannot be replaced.\r\n" +
 "Only use files you have the right to use.\r\n";

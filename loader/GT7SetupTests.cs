@@ -133,8 +133,8 @@ namespace RyGT
             Check(TrophyStore.FontFile(root) == Path.Combine(TrophyStore.BuiltinDir(root), "font.ttf"), "The built-in font is used without a custom one");
             string custom = TrophyStore.EnsureCustomFolder(root);
             Check(File.Exists(Path.Combine(custom, TrophyStore.ReadmeName)), "The custom folder gets its README.txt");
-            File.WriteAllText(Path.Combine(custom, "ps5_platinum.wav"), "x");
-            Check(TrophyStore.SoundFile(root, true) == Path.Combine(custom, "ps5_platinum.wav"), "An older custom sound name still replaces the built-in one");
+            File.WriteAllText(Path.Combine(custom, "platinum.wav"), "x");
+            Check(TrophyStore.SoundFile(root, true) == Path.Combine(custom, "platinum.wav"), "A custom sound replaces the built-in one");
             Check(TrophyStore.SoundFile(root, false) == Path.Combine(TrophyStore.BuiltinDir(root), "trophy.wav"), "A sound the custom folder lacks stays built in");
             Check(TrophyStore.TestToastPending(root) == '\0', "No test pop-up by default");
             TrophyStore.SetTestToast(root, 'P');
