@@ -291,6 +291,9 @@ struct Player {
     // Media clock: bankedMs is the media time reached at clockAnchor; a cleared anchor means stopped.
     std::chrono::steady_clock::time_point clockAnchor{};
     std::uint64_t bankedMs = 0;
+    std::int64_t slewBudgetUs = 0;
+    std::chrono::steady_clock::time_point slewAt{};
+    std::uint64_t clockMoves = 0;
     std::uint64_t framesDelivered = 0;
     std::string path;
     std::vector<std::uint8_t*> frames; // blank clip
@@ -379,6 +382,13 @@ std::uint32_t AvpFadeInMs() {
     }();
     return n;
 }
+bool AvpStats() {
+    static const bool on = [] {
+        const char* env = std::getenv("RYGT_AVP_STATS");
+        return env != nullptr && env[0] == '1';
+    }();
+    return on;
+}
 std::uint32_t AvpPrefillMs() {
     static const std::uint32_t n = [] {
         const char* env = std::getenv("RYGT_AVP_PREFILL_MS");
@@ -445,6 +455,7 @@ void ReleaseShown(Decoder& d, std::uint8_t* buffer) {
 void LogAudioStart(Decoder& d, const char* why) {
     if (d.avaLogged) return;
     d.avaLogged = true;
+    if (!AvpStats()) return;
     std::fprintf(stderr, "[AVP] PRT-AVAUDIO (%s): %llu pulls, %llu empty, lowest queued %lld ms, %llu gaps over 30 ms "
                  "between pulls, first pull %lld ms after start, %llu timestamp jumps, %llu repeats; cores: title "
                  "puller 0x%llx, audio decoder 0x%llx, video decoder 0x%llx (SceSndzAudioOutMain on P-cores)\n",
@@ -526,6 +537,8 @@ std::uint64_t MediaTime(Player& p) {
             if (AvpSmoothClock() && p.clockAnchor != std::chrono::steady_clock::time_point{}) {
                 const std::int64_t elapsed =
                     std::chrono::duration_cast<std::chrono::milliseconds>(now - p.clockAnchor).count();
+                const std::int64_t elapsedUs =
+                    std::chrono::duration_cast<std::chrono::microseconds>(now - p.clockAnchor).count();
                 wall = static_cast<std::int64_t>(p.bankedMs) + elapsed;
                 const std::int64_t drift = wall - audio;
                 d->statDriftMs.store(drift, std::memory_order_relaxed);
@@ -533,9 +546,16 @@ std::uint64_t MediaTime(Player& p) {
                     wall = audio;
                     d->statSnaps.fetch_add(1, std::memory_order_relaxed);
                 } else {
-                    const std::int64_t cap = elapsed / 4;
-                    wall -= std::clamp<std::int64_t>(drift, -cap, cap);
+                    const std::int64_t sinceUs =
+                        std::chrono::duration_cast<std::chrono::microseconds>(now - p.slewAt).count();
+                    p.slewBudgetUs = std::min<std::int64_t>(p.slewBudgetUs + sinceUs / 4,
+                                                            std::max<std::int64_t>(elapsedUs / 4, 4000));
+                    const std::int64_t cap = p.slewBudgetUs / 1000;
+                    const std::int64_t step = std::clamp<std::int64_t>(drift, -cap, cap);
+                    wall -= step;
+                    p.slewBudgetUs -= (step < 0 ? -step : step) * 1000;
                 }
+                p.slewAt = now;
                 p.bankedMs = static_cast<std::uint64_t>(std::max<std::int64_t>(wall, 0));
                 p.clockAnchor += std::chrono::milliseconds(elapsed);
                 return p.bankedMs;
@@ -912,7 +932,7 @@ void* APS5_VABI ReaderThread(void* arg) {
                          static_cast<unsigned long long>(d->statMissed.exchange(0)),
                          static_cast<long long>(d->statDriftMs.load()),
                          static_cast<unsigned long long>(d->statSnaps.exchange(0)));
-            {
+            if (AvpStats()) {
                 std::uint64_t luma = 0, all = 0, faults = 0;
                 const bool have = GpuAvTexStats(luma, all, faults);
                 std::size_t held, freeCount, queued;
@@ -1309,6 +1329,11 @@ void BeginPlayback(Player* p) {
     }
     if (const std::uint32_t prefill = AvpPrefillMs(); prefill != 0) {
         const auto t0 = std::chrono::steady_clock::now();
+        std::uint64_t moves;
+        {
+            std::lock_guard g(p->lock);
+            moves = p->clockMoves;
+        }
         std::uint64_t audioMs = 0;
         std::size_t pictures = 0;
         bool ready;
@@ -1324,8 +1349,10 @@ void BeginPlayback(Player* p) {
         }
         {
             std::lock_guard g(p->lock);
-            p->bankedMs = 0;
-            p->clockAnchor = {};
+            if (p->clockMoves == moves) {
+                p->bankedMs = 0;
+                p->clockAnchor = {};
+            }
         }
         std::fprintf(stderr, "[AVP] PRT-AVAUDIO: prefill %s in %lld ms: %llu ms of audio, %zu pictures\n",
                      ready ? "done" : "timed out",
@@ -1581,6 +1608,7 @@ int APS5_VABI sceAvPlayerJumpToTime(void* h, std::uint64_t time_ms) {
   const auto duration = Duration(*p);
   p->bankedMs = duration != 0 && time_ms > duration ? duration : time_ms;
   p->clockAnchor = {};
+  ++p->clockMoves;
  }
  std::uint32_t warning = kWarningJumpComplete;
  Fire(p, kEventWarning, &warning);
