@@ -123,6 +123,9 @@ private:
     void addDefaults(Device& primary, std::vector<ActiveBinding>& out) const;
     bool userOverrides(const Pad::JoystickBinding& binding) const;
     void logActivity(Device& device);
+    static void logRest(const Device& device, const char* note);
+    bool isPedalAxis(const Device& device, std::size_t axis) const;
+    bool correctLogitechPedalRest(Device& device);
     Device* primary() const;
 
     std::vector<Pad::JoystickBinding> userBindings;
